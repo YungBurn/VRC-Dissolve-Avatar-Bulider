@@ -1,0 +1,21 @@
+{
+  "dataVersion": 1,
+  "coordinateEncoding": "UV4.x = dot(AvatarRootLocalPosition, -ScanMoveDirection)",
+  "finalBaked": {
+    "opaque": "YBTools/溶解/FinalBaked/Hair Dissolve",
+    "cutout": "YBTools/溶解/FinalBaked/Hair Dissolve Cutout",
+    "transparent": "YBTools/溶解/FinalBaked/Hair Dissolve Transparent",
+    "overlay": "YBTools/溶解/FinalBaked/Scan Overlay"
+  },
+  "legacyRootMatrix": {
+    "opaque": "YBTools/溶解/Hair Dissolve",
+    "cutout": "YBTools/溶解/Hair Dissolve Cutout",
+    "transparent": "YBTools/溶解/Hair Dissolve Transparent",
+    "overlay": "YBTools/Scan/Surface Overlay"
+  },
+  "supportedLilToonTransparentModes": {
+    "0": "Opaque",
+    "1": "Cutout",
+    "2": "Transparent"
+  }
+}

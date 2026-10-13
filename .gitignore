@@ -1,0 +1,26 @@
+# Editor / OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Unity cache if this repository is ever opened as a project
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+Build/
+Builds/
+
+# User-generated output, not part of the YBTools source distribution
+_YBToolsGenerated/
+Assets/_YBToolsGenerated/
+
+# Local distributable archives
+*.zip
+
+# IMPORTANT: Do NOT ignore *.meta; Unity asset GUIDs must remain stable.

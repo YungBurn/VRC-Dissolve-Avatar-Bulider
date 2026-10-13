@@ -1,0 +1,7 @@
+        //----------------------------------------------------------------------------------------------------------------------
+        // YB FinalBaked scan dissolve
+        [Toggle] _YBScanDissolveEnabled ("YB Scan Dissolve Enabled", Float) = 1
+        _YBScanHeight ("YB Scan Height", Float) = 1.5
+        _YBScanRole ("YB Scan Role", Range(0,1)) = 0
+        _YBScanNoiseStrength ("YB Scan Noise Strength", Range(0,0.25)) = 0.04
+        _YBScanRootOffset ("YB Root Offset", Vector) = (0,0,0,0)

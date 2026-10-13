@@ -1,0 +1,47 @@
+Shader "YBTools/溶解/FinalBaked/Hair Dissolve Fur TwoPass"
+{
+    Properties
+    {
+        lilProperties "Default"
+        lilProperties "DefaultFurTransparent"
+        lilProperties "YBScanProperties.lilblock"
+    }
+
+    HLSLINCLUDE
+        #define LIL_RENDER 2
+        // UV4.x/TEXCOORD3 is required only by visible Fur passes.
+        // Some lilToon versions use a reduced appdata in SHADOW_CASTER; forcing uv3 there causes
+        // "invalid subscript uv3" inside lil_common_vert.hlsl.
+        // Fur uses appdata -> v2g -> geometry -> v2f -> fragment.
+        // The stock Fur pass does not declare uv3 in v2g/v2f, so merely defining
+        // LIL_V2G_TEXCOORD3 / LIL_V2F_TEXCOORD3 is not enough.
+        // Explicitly add uv3 through lilToon's documented custom members so the
+        // BakedAvatarY stored in Mesh UV4.x (TEXCOORD3) survives the geometry stage.
+        #if !defined(LIL_PASS_SHADOWCASTER) && !defined(UNITY_PASS_SHADOWCASTER) && !defined(SHADERPASS_SHADOWCASTER) && !defined(LIL_PASS_META)
+            #define LIL_REQUIRE_APP_TEXCOORD3
+            #define LIL_V2G_TEXCOORD3
+            #define LIL_V2F_TEXCOORD3
+            // Use id1 instead of id0 for wider compatibility with older lilToon custom-varying layouts.
+            #define LIL_CUSTOM_V2G_MEMBER(id0,id1,id2,id3,id4,id5,id6,id7) float2 uv3 : TEXCOORD ## id1;
+            #define LIL_CUSTOM_V2F_MEMBER(id0,id1,id2,id3,id4,id5,id6,id7) float2 uv3 : TEXCOORD ## id1;
+        #endif
+        #define LIL_CUSTOM_PROPERTIES \
+            float _YBScanDissolveEnabled; \
+            float _YBScanHeight; \
+            float _YBScanRole; \
+            float _YBScanNoiseStrength; \
+            float4 _YBScanRootOffset;
+        #if !defined(LIL_PASS_SHADOWCASTER) && !defined(UNITY_PASS_SHADOWCASTER) && !defined(SHADERPASS_SHADOWCASTER) && !defined(LIL_PASS_META)
+            #define BEFORE_UNPACK_V2F YBScanClip(input.positionCS.xy, input.uv3.x);
+        #endif
+    ENDHLSL
+
+    lilSubShaderTags {"RenderType" = "TransparentCutout" "Queue" = "Transparent"}
+    lilSubShaderInsert "YBScanFunctions.lilblock"
+    lilSubShaderBRP "DefaultFur"
+    lilSubShaderLWRP "DefaultFur"
+    lilSubShaderURP "DefaultFur"
+    lilSubShaderHDRP "DefaultFur"
+
+    CustomEditor "lilToon.lilToonInspector"
+}

@@ -1,0 +1,36 @@
+Shader "YBTools/溶解/FinalBaked/Hair Dissolve Refraction"
+{
+    Properties
+    {
+        lilProperties "Default"
+        lilProperties "DefaultRefraction"
+        lilProperties "YBScanProperties.lilblock"
+    }
+
+    HLSLINCLUDE
+        #define LIL_CUSTOM_PROPERTIES \
+            float _YBScanDissolveEnabled; \
+            float _YBScanHeight; \
+            float _YBScanRole; \
+            float _YBScanNoiseStrength; \
+            float4 _YBScanRootOffset;
+        // Keep the custom UV4 transfer out of SHADOW_CASTER. This is compatible with lilToon
+        // versions where the shadow appdata omits uv3. id1 is used intentionally to also avoid
+        // the historical ShadowCaster TEXCOORD id0 collision.
+        #if !defined(UNITY_PASS_SHADOWCASTER) && !defined(SHADERPASS_SHADOWCASTER)
+            #define LIL_REQUIRE_APP_TEXCOORD3
+            #define LIL_CUSTOM_V2F_MEMBER(id0,id1,id2,id3,id4,id5,id6,id7) float ybBakedAvatarY : TEXCOORD ## id1;
+            #define LIL_CUSTOM_VERT_COPY LIL_V2F_OUT.ybBakedAvatarY = input.uv3.x;
+            #define BEFORE_UNPACK_V2F YBScanClip(input.positionCS.xy, input.ybBakedAvatarY);
+        #endif
+    ENDHLSL
+
+    lilSubShaderTags {"RenderType" = "Opaque" "Queue" = "Transparent-100"}
+    lilSubShaderInsert "YBScanFunctions.lilblock"
+    lilSubShaderBRP "DefaultRefraction"
+    lilSubShaderLWRP "DefaultRefraction"
+    lilSubShaderURP "DefaultRefraction"
+    lilSubShaderHDRP "DefaultRefraction"
+
+    CustomEditor "lilToon.lilToonInspector"
+}

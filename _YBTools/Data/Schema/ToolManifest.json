@@ -1,0 +1,35 @@
+{
+  "name": "YB Dissolve Avatar Builder",
+  "version": "0.2.0",
+  "profileDataVersion": 3,
+  "bakedScanDataVersion": 2,
+  "generatedRoot": "Assets/_YBToolsGenerated",
+  "runtimeCustomMonoBehaviourRequired": false,
+  "features": [
+    "profile",
+    "material-analysis",
+    "custom-scan-direction",
+    "directional-scan-delays",
+    "scan-curve-and-glow",
+    "baked-scan-coordinate",
+    "special-liltoon-rendering-modes",
+    "material-variants",
+    "reversible-avatar-installer",
+    "fx-controller",
+    "vrchat-action-controller",
+    "modular-avatar-menu",
+    "runtime-renderer-relocation",
+    "edit-play-validation"
+  ],
+  "supportedRenderingModes": [
+    "Opaque",
+    "Cutout",
+    "Transparent",
+    "Refraction",
+    "RefractionBlur",
+    "Fur",
+    "FurCutout",
+    "FurTwoPass",
+    "Gem"
+  ]
+}

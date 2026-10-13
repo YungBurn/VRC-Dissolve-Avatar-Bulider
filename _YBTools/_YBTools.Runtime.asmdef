@@ -1,0 +1,14 @@
+{
+  "name": "_YBTools.Runtime",
+  "rootNamespace": "YBTools.Dissolve",
+  "references": [],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

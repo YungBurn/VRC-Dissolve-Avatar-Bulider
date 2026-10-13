@@ -1,0 +1,4 @@
+// YBTools FinalBaked Special shader metadata.
+// Use lilToon's stock ShaderGUI directly. This avoids creating a user Editor
+// assembly dependency on lilToon's editor-side C# types.
+EditorName "lilToon.lilToonInspector"

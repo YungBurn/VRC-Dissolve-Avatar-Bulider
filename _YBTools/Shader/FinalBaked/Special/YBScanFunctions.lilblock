@@ -1,0 +1,18 @@
+// YB FinalBaked scan helper. UV4.x/TEXCOORD3 stores AvatarRoot local Y.
+float YBScanHash(float2 p)
+{
+    return frac(sin(dot(p, float2(12.9898,78.233))) * 43758.5453);
+}
+float YBScanVisible(float2 seed, float bakedAvatarY)
+{
+    if(_YBScanDissolveEnabled < 0.5) return 1.0;
+    float rootY = bakedAvatarY + _YBScanRootOffset.y;
+    float noise = (YBScanHash(seed)-0.5) * _YBScanNoiseStrength;
+    float threshold = _YBScanHeight + noise;
+    float below = step(rootY, threshold);
+    return lerp(below, 1.0-below, saturate(_YBScanRole));
+}
+void YBScanClip(float2 seed, float bakedAvatarY)
+{
+    clip(YBScanVisible(seed, bakedAvatarY)-0.5);
+}
