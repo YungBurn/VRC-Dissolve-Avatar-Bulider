@@ -2,4 +2,4 @@
 
 支持 Refraction、Refraction Blur、Fur、Fur Cutout、Fur TwoPass 与 Gem。
 
-扫描标量来自 Mesh UV4.x / TEXCOORD3.x。Fur Geometry Pass 会把该标量传递到可见 Fragment；ShadowCaster 保持兼容路径，不强制访问不存在的 UV3 字段。
+扫描标量来自 Mesh UV4.x / TEXCOORD3.x。Fur Geometry Pass 把该标量传给可见 Fragment。Built-in Render Pipeline 的 ShadowCaster 从基础网格直接读取该标量，与可见 Pass 使用相同的 UV0 噪声和扫描阈值。

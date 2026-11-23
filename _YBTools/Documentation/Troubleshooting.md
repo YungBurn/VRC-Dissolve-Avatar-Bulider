@@ -1,5 +1,15 @@
 # Troubleshooting
 
+## PCSS4VRC 的衣服投影先于溶解动画切换
+
+更新 `_YBTools/Shader/FinalBaked` 并等 Unity 重新导入。新版 ShadowCaster 与衣服表面使用同一套溶解裁剪，PCSS 灯光可从更新后的阴影图读取逐步变化的衣服投影。现有 FinalBaked 材质和动画引用可直接使用。
+
+测试时确认衣服 Renderer 开启了 Cast Shadows，PCSS 灯光包含其 Layer，并且其他换装 Animator 在扫描中没有提前关闭衣服对象或 Renderer。
+
+## PCSS4VRC 光强滑杆只影响身体
+
+旧版生成的衣服材质使用普通 lilToon 的受光方式。更新插件后，在 **验证** 页点击 **原位更新已安装服装的 PCSS 受光**。它会更新当前 Avatar 已安装的不透明、镂空和半透明溶解材质，保留原材质资产引用和扫描动画。衣服材质的 Shader 名称应以 `YBTools/PCSS4VRC/` 开头。看到材质更新数量后，再构建或上传 Avatar。
+
 ## 改变扫描方向后验证失败
 方向属于 Baked Mesh 数据。重新生成 Baked Mesh，并重新安装主扫描；使用材质变体时也需要重新构建材质变体 Mesh。
 

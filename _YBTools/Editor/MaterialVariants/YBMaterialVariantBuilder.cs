@@ -116,6 +116,7 @@ namespace YBTools.Dissolve.Editor
                 temp.toolVersion = YBToolVersion.Version;
                 temp.avatarHint = avatarRoot.name;
                 temp.profile = profile;
+                var pcss = new YBPcssLighting(avatarRoot);
 
                 for (int i = 0; i < profile.materialVariants.Count; i++)
                 {
@@ -131,14 +132,14 @@ namespace YBTools.Dissolve.Editor
                         profile.scan.GetMoveDirection());
                     AppendDuplicateSubmesh(generated, v.materialSlot);
 
-                    Material a0 = BuildRoleMaterial(v.outfitAMaterial, 0f, profile, matDir + "/YB_" + safe + "_A_Role0.mat");
-                    Material a1 = BuildRoleMaterial(v.outfitAMaterial, 1f, profile, matDir + "/YB_" + safe + "_A_Role1.mat");
-                    Material b0 = BuildRoleMaterial(v.outfitBMaterial, 0f, profile, matDir + "/YB_" + safe + "_B_Role0.mat");
-                    Material b1 = BuildRoleMaterial(v.outfitBMaterial, 1f, profile, matDir + "/YB_" + safe + "_B_Role1.mat");
+                    Material a0 = BuildRoleMaterial(v.outfitAMaterial, 0f, profile, matDir + "/YB_" + safe + "_A_Role0.mat", r, pcss);
+                    Material a1 = BuildRoleMaterial(v.outfitAMaterial, 1f, profile, matDir + "/YB_" + safe + "_A_Role1.mat", r, pcss);
+                    Material b0 = BuildRoleMaterial(v.outfitBMaterial, 0f, profile, matDir + "/YB_" + safe + "_B_Role0.mat", r, pcss);
+                    Material b1 = BuildRoleMaterial(v.outfitBMaterial, 1f, profile, matDir + "/YB_" + safe + "_B_Role1.mat", r, pcss);
 
                     var mats = new List<Material>(sourceMaterials);
                     int appended = mats.Count;
-                    bool defaultA = profile.defaultOutfit != YBOutfitDefault.OutfitB;
+                    bool defaultA = profile.DefaultOutfitIndex != 1;
                     mats[v.materialSlot] = defaultA ? a0 : a1;
                     mats.Add(defaultA ? b1 : b0);
 
@@ -216,6 +217,14 @@ namespace YBTools.Dissolve.Editor
             EditorCurveBinding sourceBinding = AnimationUtility.GetCurveBindings(clip)
                 .FirstOrDefault(b => b.propertyName.IndexOf("_YBScanHeight", StringComparison.OrdinalIgnoreCase) >= 0);
             AnimationCurve sourceCurve = string.IsNullOrEmpty(sourceBinding.propertyName) ? null : AnimationUtility.GetEditorCurve(clip, sourceBinding);
+            ApplyBindings(clip, record, outfitAState, !outfitAState, sourceCurve);
+        }
+
+        internal static void ApplyBindings(AnimationClip clip, YBMaterialVariantInstallRecord record,
+            bool sourceUsesA, bool destinationUsesA, AnimationCurve sourceCurve)
+        {
+            if (clip == null || record == null || record.renderers == null || record.renderers.Count == 0) return;
+            bool swap = !sourceUsesA && destinationUsesA;
             float end = Mathf.Max(1f / 60f, clip.length);
 
             foreach (var rr in record.renderers)
@@ -230,10 +239,10 @@ namespace YBTools.Dissolve.Editor
                     EditorCurveBinding.FloatCurve(rr.rendererPath, typeof(Renderer), "material._YBScanDissolveEnabled"),
                     AnimationCurve.Constant(0f, end, 1f));
 
-                Material a = outfitAState ? rr.outfitARole0 : rr.outfitARole1;
-                Material bmat = outfitAState ? rr.outfitBRole1 : rr.outfitBRole0;
-                SetMaterialSlotCurve(clip, rr.rendererPath, rr.sourceSlot, a, end);
-                SetMaterialSlotCurve(clip, rr.rendererPath, rr.appendedSlot, bmat, end);
+                Material source = sourceUsesA ? rr.outfitARole0 : rr.outfitBRole0;
+                Material destination = destinationUsesA ? rr.outfitARole1 : rr.outfitBRole1;
+                SetMaterialSlotCurve(clip, rr.rendererPath, rr.sourceSlot, swap ? destination : source, end);
+                SetMaterialSlotCurve(clip, rr.rendererPath, rr.appendedSlot, swap ? source : destination, end);
             }
         }
 
@@ -285,20 +294,22 @@ namespace YBTools.Dissolve.Editor
             EditorUtility.SetDirty(mesh);
         }
 
-        private static Material BuildRoleMaterial(Material source, float role, YBDissolveProfile profile, string path)
+        private static Material BuildRoleMaterial(Material source, float role, YBDissolveProfile profile, string path, Renderer renderer, YBPcssLighting pcss)
         {
             string shaderError;
             Shader shader = ResolveTargetShader(source, out shaderError);
             if (shader == null) throw new InvalidOperationException(shaderError);
+            bool usePcss = pcss.AppliesTo(renderer, source, shader);
             Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
             Material temp = new Material(source) { name = Path.GetFileNameWithoutExtension(path) };
             int queue = source.renderQueue;
-            temp.shader = shader;
+            temp.shader = usePcss ? pcss.GetShader(shader) : shader;
             temp.renderQueue = queue;
             if (temp.HasProperty(ScanHeight)) temp.SetFloat(ScanHeight, profile.scan.startHeight);
             if (temp.HasProperty(ScanRole)) temp.SetFloat(ScanRole, role);
             if (temp.HasProperty(ScanEnabled)) temp.SetFloat(ScanEnabled, 1f);
             if (temp.HasProperty(ScanNoise)) temp.SetFloat(ScanNoise, profile.scan.noiseStrength);
+            if (usePcss) pcss.ConfigureMaterial(temp, source);
 
             if (existing != null)
             {

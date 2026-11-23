@@ -29,7 +29,9 @@ namespace YBTools.Dissolve.Editor
             if (reverse == null) return "Action 输入检查失败：未选择 服装 B → A 动作，且未启用复用 A→B 动作。";
             if (profile.action.outfitAToB.legacy) return "Action 输入检查失败：A→B 动作是 Legacy AnimationClip。";
             if (reverse.legacy) return "Action 输入检查失败：B→A 动作是 Legacy AnimationClip。";
-            if (string.IsNullOrWhiteSpace(profile.parameterName)) return "Action 输入检查失败：Profile Bool 参数名为空。";
+            if (profile.HasMultipleOutfits && (profile.action.outfitAToB.length <= 0f || reverse.length <= 0f))
+                return "Action 输入检查失败：动作 Clip 的时长必须大于 0。";
+            if (string.IsNullOrWhiteSpace(profile.parameterName)) return "Action 输入检查失败：Profile 参数名为空。";
 
             Type playable = FindVrcBehaviourType("VRCPlayableLayerControl");
             if (playable == null)
@@ -49,9 +51,11 @@ namespace YBTools.Dissolve.Editor
 
             float fxAToB = profile.scan.GetDelayAToB() + Mathf.Max(0.01f, profile.scan.durationSeconds);
             float fxBToA = profile.scan.GetDelayBToA() + Mathf.Max(0.01f, profile.scan.durationSeconds);
-            string timingNote = string.Empty;
-            if (Mathf.Abs(profile.action.outfitAToB.length - fxAToB) > 0.05f ||
-                Mathf.Abs(reverse.length - fxBToA) > 0.05f)
+            string timingNote = profile.HasMultipleOutfits
+                ? "\n包含新增服装的切换复用 A→B 动作；动作播放速度随扫描总时长调整。"
+                : string.Empty;
+            if (!profile.HasMultipleOutfits && (Mathf.Abs(profile.action.outfitAToB.length - fxAToB) > 0.05f ||
+                Mathf.Abs(reverse.length - fxBToA) > 0.05f))
             {
                 timingNote = "\n提示：Action 与 FX 总时长不完全一致。可在‘效果’页分别点击‘让扫描结束对齐动作’。";
             }
@@ -97,12 +101,7 @@ namespace YBTools.Dissolve.Editor
                 AnimationClip forward = profile.action.outfitAToB;
                 AnimationClip reverse = ResolveReverse(profile);
                 AnimatorController c = AnimatorController.CreateAnimatorControllerAtPath(path);
-                c.AddParameter(new AnimatorControllerParameter
-                {
-                    name = profile.parameterName,
-                    type = AnimatorControllerParameterType.Bool,
-                    defaultBool = profile.defaultOutfit == YBOutfitDefault.OutfitB
-                });
+                YBAnimatorFXBuilder.AddSelectionParameter(c, profile);
 
                 AnimatorControllerLayer layer = c.layers[0];
                 layer.name = "YB Dissolve Action";
@@ -111,23 +110,32 @@ namespace YBTools.Dissolve.Editor
                 c.layers = new[] { layer };
 
                 AnimatorStateMachine sm = layer.stateMachine;
-                sm.name = "YB Dissolve Action";
-                AnimatorState aIdle = AddState(sm, "OutfitAIdle / ActionOff", null, new Vector3(140, 90, 0));
-                AnimatorState aToB = AddState(sm, "Action A → B", forward, new Vector3(410, 90, 0));
-                AnimatorState bIdle = AddState(sm, "OutfitBIdle / ActionOff", null, new Vector3(680, 90, 0));
-                AnimatorState bToA = AddState(sm, "Action B → A", reverse, new Vector3(410, 270, 0));
-                sm.defaultState = profile.defaultOutfit == YBOutfitDefault.OutfitB ? bIdle : aIdle;
+                sm.name = layer.name;
+                int count = profile.OutfitCount;
+                var idle = new AnimatorState[count];
+                for (int i = 0; i < count; i++)
+                {
+                    idle[i] = AddState(sm, "Outfit" + (char)('A' + i) + "Idle / ActionOff", null, new Vector3(180 + 250 * i, 90, 0));
+                    ConfigureIdle(idle[i], profile);
+                }
+                sm.defaultState = idle[profile.DefaultOutfitIndex];
 
-                ConfigureIdle(aIdle, profile);
-                ConfigureMotion(aToB, profile);
-                ConfigureIdle(bIdle, profile);
-                ConfigureMotion(bToA, profile);
-
-                float blend = Mathf.Max(0f, profile.action.blendDuration);
-                AddBoolTransition(aIdle, aToB, true, profile.parameterName, blend);
-                AddExitTransition(aToB, bIdle, blend);
-                AddBoolTransition(bIdle, bToA, false, profile.parameterName, blend);
-                AddExitTransition(bToA, aIdle, blend);
+                float blend = profile.HasMultipleOutfits ? 0f : Mathf.Max(0f, profile.action.blendDuration);
+                for (int from = 0; from < count; from++)
+                {
+                    for (int to = 0; to < count; to++)
+                    {
+                        if (from == to) continue;
+                        AnimationClip clip = from == 1 && to == 0 ? reverse : forward;
+                        AnimatorState motion = AddState(sm, $"Action {(char)('A' + from)} → {(char)('A' + to)}",
+                            clip, new Vector3(180 + 250 * to, 190 + 70 * from, 0));
+                        if (profile.HasMultipleOutfits)
+                            motion.speed = clip.length / (profile.GetTransitionDelay(from, to) + Mathf.Max(0.01f, profile.scan.durationSeconds));
+                        ConfigureMotion(motion, profile);
+                        YBAnimatorFXBuilder.AddSelectionTransition(idle[from], motion, profile, to, blend);
+                        YBAnimatorFXBuilder.AddExitTransition(motion, idle[to], blend);
+                    }
+                }
 
                 EditorUtility.SetDirty(c);
                 AssetDatabase.SaveAssets();
@@ -166,15 +174,33 @@ namespace YBTools.Dissolve.Editor
             if (profile.action == null || !profile.action.enabled) return "Action 未启用，无需验证 Action Controller。";
             if (assets == null || assets.controller == null) return "Action Controller 验证失败：未找到 YB_Dissolve_Action.controller。";
 
-            AnimatorControllerParameter param = assets.controller.parameters.FirstOrDefault(
-                p => p.name == profile.parameterName && p.type == AnimatorControllerParameterType.Bool);
-            if (param == null) return "Action Controller 验证失败：缺少 Bool 参数 " + profile.parameterName + "。";
+            if (!YBAnimatorFXBuilder.HasSelectionParameter(profile, assets.controller))
+                return "Action Controller 验证失败：服装参数类型或默认值与 Profile 不一致，请重新生成。";
 
             AnimatorControllerLayer layer = assets.controller.layers.FirstOrDefault();
             if (layer == null || layer.stateMachine == null) return "Action Controller 验证失败：缺少 Animator Layer。";
             AnimatorState[] states = layer.stateMachine.states.Select(s => s.state).Where(s => s != null).ToArray();
             AnimatorState[] motions = states.Where(s => s.motion != null).ToArray();
-            if (motions.Length < 2) return "Action Controller 验证失败：动作 State 少于 2 个。";
+            int count = profile.OutfitCount;
+            if (states.Length != count * count || motions.Length != count * (count - 1))
+                return "Action Controller 验证失败：动作状态与当前服装数量不一致，请重新生成。";
+            if (profile.HasMultipleOutfits)
+            {
+                for (int from = 0; from < count; from++)
+                {
+                    for (int to = 0; to < count; to++)
+                    {
+                        if (from == to) continue;
+                        string name = $"Action {(char)('A' + from)} → {(char)('A' + to)}";
+                        AnimatorState state = motions.FirstOrDefault(m => m.name == name);
+                        AnimationClip expected = from == 1 && to == 0 ? ResolveReverse(profile) : profile.action.outfitAToB;
+                        float duration = profile.GetTransitionDelay(from, to) + Mathf.Max(0.01f, profile.scan.durationSeconds);
+                        if (state == null || expected == null || state.motion != expected || state.speed <= 0f ||
+                            Mathf.Abs(expected.length / state.speed - duration) > 0.05f)
+                            return "Action Controller 验证失败：动作或时长已修改，请重新生成。";
+                    }
+                }
+            }
 
             Type playable = FindVrcBehaviourType("VRCPlayableLayerControl");
             if (playable != null)
@@ -246,28 +272,6 @@ namespace YBTools.Dissolve.Editor
             StateMachineBehaviour b = state.AddStateMachineBehaviour(t);
             SetMember(b, "disableLocomotion", disable);
             EditorUtility.SetDirty(b);
-        }
-
-        private static void AddBoolTransition(AnimatorState from, AnimatorState to, bool expected, string parameter, float blend)
-        {
-            AnimatorStateTransition t = from.AddTransition(to);
-            t.hasExitTime = false;
-            t.hasFixedDuration = true;
-            t.duration = Mathf.Max(0f, blend);
-            t.canTransitionToSelf = false;
-            t.interruptionSource = TransitionInterruptionSource.None;
-            t.AddCondition(expected ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot, 0f, parameter);
-        }
-
-        private static void AddExitTransition(AnimatorState from, AnimatorState to, float blend)
-        {
-            AnimatorStateTransition t = from.AddTransition(to);
-            t.hasExitTime = true;
-            t.exitTime = 1f;
-            t.hasFixedDuration = true;
-            t.duration = Mathf.Max(0f, blend);
-            t.canTransitionToSelf = false;
-            t.interruptionSource = TransitionInterruptionSource.None;
         }
 
         private static Type RequireVrcBehaviourType(string simpleName)

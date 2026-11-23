@@ -9,21 +9,21 @@ Shader "YBTools/溶解/FinalBaked/Hair Dissolve Fur TwoPass"
 
     HLSLINCLUDE
         #define LIL_RENDER 2
-        // UV4.x/TEXCOORD3 is required only by visible Fur passes.
-        // Some lilToon versions use a reduced appdata in SHADOW_CASTER; forcing uv3 there causes
-        // "invalid subscript uv3" inside lil_common_vert.hlsl.
-        // Fur uses appdata -> v2g -> geometry -> v2f -> fragment.
-        // The stock Fur pass does not declare uv3 in v2g/v2f, so merely defining
-        // LIL_V2G_TEXCOORD3 / LIL_V2F_TEXCOORD3 is not enough.
-        // Explicitly add uv3 through lilToon's documented custom members so the
-        // BakedAvatarY stored in Mesh UV4.x (TEXCOORD3) survives the geometry stage.
-        #if !defined(LIL_PASS_SHADOWCASTER) && !defined(UNITY_PASS_SHADOWCASTER) && !defined(SHADERPASS_SHADOWCASTER) && !defined(LIL_PASS_META)
+        #if defined(UNITY_PASS_SHADOWCASTER)
+            // Built-in ShadowCaster uses v2f directly, without the Fur geometry stage.
+            #define LIL_REQUIRE_APP_TEXCOORD3
+            #define LIL_V2F_FORCE_TEXCOORD0
+            #define LIL_CUSTOM_V2F_MEMBER(id0,id1,id2,id3,id4,id5,id6,id7) float ybBakedAvatarY : TEXCOORD ## id1;
+            #define LIL_CUSTOM_VERT_COPY LIL_V2F_OUT.ybBakedAvatarY = input.uv3.x;
+            #define BEFORE_UNPACK_V2F LIL_UNPACK_TEXCOORD0(input, fd); YBScanClip(fd.uv0, input.ybBakedAvatarY);
+        #elif !defined(LIL_PASS_SHADOWCASTER) && !defined(SHADERPASS_SHADOWCASTER) && !defined(LIL_PASS_META)
+            // Carry the bake coordinate through both stages of the visible Fur pass.
             #define LIL_REQUIRE_APP_TEXCOORD3
             #define LIL_V2G_TEXCOORD3
             #define LIL_V2F_TEXCOORD3
-            // Use id1 instead of id0 for wider compatibility with older lilToon custom-varying layouts.
             #define LIL_CUSTOM_V2G_MEMBER(id0,id1,id2,id3,id4,id5,id6,id7) float2 uv3 : TEXCOORD ## id1;
             #define LIL_CUSTOM_V2F_MEMBER(id0,id1,id2,id3,id4,id5,id6,id7) float2 uv3 : TEXCOORD ## id1;
+            #define BEFORE_UNPACK_V2F LIL_UNPACK_TEXCOORD0(input, fd); YBScanClip(fd.uv0, input.uv3.x);
         #endif
         #define LIL_CUSTOM_PROPERTIES \
             float _YBScanDissolveEnabled; \
@@ -31,9 +31,6 @@ Shader "YBTools/溶解/FinalBaked/Hair Dissolve Fur TwoPass"
             float _YBScanRole; \
             float _YBScanNoiseStrength; \
             float4 _YBScanRootOffset;
-        #if !defined(LIL_PASS_SHADOWCASTER) && !defined(UNITY_PASS_SHADOWCASTER) && !defined(SHADERPASS_SHADOWCASTER) && !defined(LIL_PASS_META)
-            #define BEFORE_UNPACK_V2F YBScanClip(input.positionCS.xy, input.uv3.x);
-        #endif
     ENDHLSL
 
     lilSubShaderTags {"RenderType" = "TransparentCutout" "Queue" = "Transparent"}

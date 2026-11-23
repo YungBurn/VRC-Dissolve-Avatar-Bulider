@@ -261,6 +261,7 @@ namespace YBTools.Dissolve.Editor
                     else if (trim.StartsWith("generatedUtc:", StringComparison.Ordinal)) manifest.generatedUtc = DecodeYamlString(Scalar(trim, "generatedUtc:"));
                     else if (trim.StartsWith("avatarHint:", StringComparison.Ordinal)) manifest.avatarHint = DecodeYamlString(Scalar(trim, "avatarHint:"));
                     else if (trim.StartsWith("profile:", StringComparison.Ordinal)) manifest.profile = LoadReference<YBDissolveProfile>(ReadReference(lines, ref i, trim));
+                    else if (trim.StartsWith("outfitLayoutHash:", StringComparison.Ordinal)) manifest.outfitLayoutHash = DecodeYamlString(Scalar(trim, "outfitLayoutHash:"));
                     else if (trim.StartsWith("bakedScanDataVersion:", StringComparison.Ordinal)) manifest.bakedScanDataVersion = ParseInt(Scalar(trim, "bakedScanDataVersion:"));
                     else if (trim.StartsWith("bakedScanMoveDirection:", StringComparison.Ordinal)) manifest.bakedScanMoveDirection = ParseVector3(Scalar(trim, "bakedScanMoveDirection:"), Vector3.down);
                     else if (trim.StartsWith("sourceRendererCount:", StringComparison.Ordinal)) manifest.sourceRendererCount = ParseInt(Scalar(trim, "sourceRendererCount:"));

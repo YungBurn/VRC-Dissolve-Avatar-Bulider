@@ -76,6 +76,7 @@ namespace YBTools.Dissolve.Editor
             manifestTemp.generatedUtc = DateTime.UtcNow.ToString("o");
             manifestTemp.avatarHint = avatarRoot.name;
             manifestTemp.profile = profile;
+            manifestTemp.outfitLayoutHash = report.outfitLayoutHash;
             manifestTemp.bakedScanDataVersion = YBToolVersion.BakedScanDataVersion;
             manifestTemp.bakedScanMoveDirection = profile.scan.GetMoveDirection();
             manifestTemp.sourceRendererCount = report.RendererCount;
@@ -85,6 +86,7 @@ namespace YBTools.Dissolve.Editor
 
             try
             {
+                var pcss = new YBPcssLighting(avatarRoot);
                 for (int i = 0; i < report.renderers.Count; i++)
                 {
                     YBRendererAnalysis analyzed = report.renderers[i];
@@ -124,14 +126,17 @@ namespace YBTools.Dissolve.Editor
                         needsBakedMesh = true;
                         int role = GetInitialRole(profile, analyzed.outfitGroup);
                         string sourceKey = GetSourceMaterialKey(slot.material, slot.assetGuid, analyzed.hierarchyPath, slot.slotIndex);
-                        string groupKey = analyzed.outfitGroup == "Outfit B" ? "B" : "A";
-                        string dissolveKey = groupKey + "|" + sourceKey + "|" + resolved.mode + "|role=" + role;
+                        string groupKey = GetGroupKey(analyzed.outfitGroup);
+                        Shader target = GetShader(resolved.mode, opaque, cutout, transparent, refraction, refractionBlur, fur, furCutout, furTwoPass, gem);
+                        bool usePcss = pcss.AppliesTo(analyzed.renderer, slot.material, target);
+                        string dissolveKey = groupKey + "|" + sourceKey + "|" + resolved.mode + "|role=" + role + (usePcss ? "|pcss" : "");
                         Material dissolve;
                         if (!dissolveCache.TryGetValue(dissolveKey, out dissolve))
                         {
                             string matName = "YB_Dissolve_" + groupKey + "_" + SafeMaterialName(slot.materialName) + "_" + ShortHash(dissolveKey);
                             string path = dissolveFolder + "/" + matName + ".mat";
-                            dissolve = BuildDissolveMaterial(slot.material, GetShader(resolved.mode, opaque, cutout, transparent, refraction, refractionBlur, fur, furCutout, furTwoPass, gem), profile, role, path);
+                            dissolve = BuildDissolveMaterial(slot.material, usePcss ? pcss.GetShader(target) : target,
+                                profile, role, path, usePcss ? pcss : null);
                             dissolveCache[dissolveKey] = dissolve;
                             manifestTemp.generatedDissolveMaterialCount++;
                         }
@@ -154,7 +159,7 @@ namespace YBTools.Dissolve.Editor
 
                     if (needsBakedMesh)
                     {
-                        string meshName = "YB_Mesh_" + (analyzed.outfitGroup == "Outfit B" ? "B_" : "A_") +
+                        string meshName = "YB_Mesh_" + GetGroupKey(analyzed.outfitGroup) + "_" +
                                           YBPathUtility.SanitizeAssetName(analyzed.rendererName, "Renderer") + "_" + ShortHash(analyzed.hierarchyPath);
                         string meshPath = meshFolder + "/" + meshName + ".asset";
                         record.bakedMesh = YBBakedMeshBuilder.BuildOrUpdate(
@@ -247,8 +252,10 @@ namespace YBTools.Dissolve.Editor
 
         public static string ValidatePreflight(YBDissolveProfile profile, YBAnalysisReport report, bool allowOverwriteUv4)
         {
-            var errors = new List<string>();
             if (profile == null) return "Profile 为空。";
+            var errors = new List<string>(report.outfitBindingErrors);
+            if (profile.OutfitCount > YBDissolveProfile.MaxOutfits)
+                errors.Add("服装数量超过上限 " + YBDissolveProfile.MaxOutfits + "。");
             if (profile.scan.directionPreset == YBScanDirectionPreset.Custom &&
                 profile.scan.customDirection.sqrMagnitude < 0.000001f)
                 errors.Add("自定义扫描方向不能为 (0,0,0)");
@@ -342,10 +349,12 @@ namespace YBTools.Dissolve.Editor
 
         private static int GetInitialRole(YBDissolveProfile profile, string outfitGroup)
         {
-            bool isB = outfitGroup == "Outfit B";
-            bool defaultB = profile.defaultOutfit == YBOutfitDefault.OutfitB;
-            bool visibleByDefault = isB == defaultB;
-            return visibleByDefault ? 0 : 1;
+            return outfitGroup == YBDissolveProfile.OutfitGroup(profile.DefaultOutfitIndex) ? 0 : 1;
+        }
+
+        private static string GetGroupKey(string outfitGroup)
+        {
+            return string.IsNullOrEmpty(outfitGroup) ? "A" : outfitGroup.Substring(outfitGroup.Length - 1);
         }
 
         private static YBUnsupportedMaterialAction ActionForMode(YBMaterialRenderMode mode)
@@ -433,7 +442,8 @@ namespace YBTools.Dissolve.Editor
             Shader targetShader,
             YBDissolveProfile profile,
             int role,
-            string assetPath)
+            string assetPath,
+            YBPcssLighting pcss)
         {
             Material temp = new Material(source);
             temp.name = Path.GetFileNameWithoutExtension(assetPath);
@@ -445,6 +455,7 @@ namespace YBTools.Dissolve.Editor
             SetFloat(temp, "_YBScanRole", role);
             SetFloat(temp, "_YBScanNoiseStrength", profile.scan.noiseStrength);
             SetVector(temp, "_YBScanRootOffset", Vector4.zero);
+            pcss?.ConfigureMaterial(temp, source);
             return SaveOrUpdateMaterial(temp, assetPath);
         }
 

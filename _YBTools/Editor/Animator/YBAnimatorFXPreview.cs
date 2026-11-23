@@ -20,7 +20,8 @@ namespace YBTools.Dissolve.Editor
         private static bool addedAnimator;
         private static bool active;
         private static string parameterName;
-        private static bool currentValue;
+        private static YBDissolveProfile activeProfile;
+        private static int selectedOutfit;
 
         static YBAnimatorFXPreview()
         {
@@ -31,7 +32,7 @@ namespace YBTools.Dissolve.Editor
         }
 
         public static bool Active { get { return active; } }
-        public static bool CurrentValue { get { return currentValue; } }
+        public static int SelectedOutfit => selectedOutfit;
 
         public static string DiagnoseRuntimePaths(GameObject avatarRoot, YBAvatarInstallRecord installRecord)
         {
@@ -61,7 +62,9 @@ namespace YBTools.Dissolve.Editor
                 if (avatarRoot == null) throw new InvalidOperationException("Avatar Root 为空。 ");
                 if (profile == null) throw new InvalidOperationException("Profile 为空。 ");
                 if (installRecord == null) throw new InvalidOperationException("InstallRecord 为空。 ");
-                if (assets == null || !assets.success || assets.controller == null) throw new InvalidOperationException("Animator-FX 资产不完整。 ");
+                string validation = YBAnimatorFXBuilder.ValidateGenerated(profile, assets);
+                if (!validation.StartsWith("Animator-FX 验证通过", StringComparison.Ordinal))
+                    throw new InvalidOperationException(validation);
                 Stop();
 
                 Dictionary<string, string> pathMap;
@@ -106,13 +109,13 @@ namespace YBTools.Dissolve.Editor
                 graph.Play();
 
                 parameterName = profile.parameterName;
-                currentValue = profile.defaultOutfit == YBOutfitDefault.OutfitB;
-                fxPlayable.SetBool(Animator.StringToHash(parameterName), currentValue);
+                activeProfile = profile;
                 active = true;
+                SelectOutfit(profile.DefaultOutfitIndex);
 
                 return string.Format(
                     "临时 Animator-FX 验证已开始。当前 {0}={1}。路径：原路径 {2} / 重定位 {3}。{4}",
-                    parameterName, currentValue ? "true" : "false", exact, moved,
+                    parameterName, profile.OutfitName(selectedOutfit), exact, moved,
                     runtimeRebind ? "运行时重绑定已开启。" : "运行时重绑定已关闭。");
             }
             catch (Exception ex)
@@ -123,12 +126,17 @@ namespace YBTools.Dissolve.Editor
             }
         }
 
-        public static string SetValue(bool value)
+        public static string SelectOutfit(int index)
         {
             if (!active || !fxPlayable.IsValid()) return "Animator-FX 临时验证尚未启动。";
-            currentValue = value;
-            fxPlayable.SetBool(Animator.StringToHash(parameterName), value);
-            return parameterName + "=" + (value ? "true（服装 B）" : "false（服装 A）");
+            if (index < 0 || index >= activeProfile.OutfitCount) return "服装编号超出范围。";
+            selectedOutfit = index;
+            int hash = Animator.StringToHash(parameterName);
+            if (activeProfile.HasMultipleOutfits)
+                fxPlayable.SetInteger(hash, YBAnimatorFXBuilder.SelectionValue(index));
+            else
+                fxPlayable.SetBool(hash, index == 1);
+            return parameterName + " → " + activeProfile.OutfitName(index);
         }
 
         public static void Stop()
@@ -154,21 +162,22 @@ namespace YBTools.Dissolve.Editor
             originalController = null;
             addedAnimator = false;
             active = false;
+            activeProfile = null;
             fxPlayable = default(AnimatorControllerPlayable);
         }
 
         private static RuntimeAnimatorController BuildRuntimeOverride(YBAnimatorFXAssets assets, Dictionary<string, string> pathMap)
         {
-            AnimationClip ai = CloneClip(assets.outfitAIdle, pathMap);
-            AnimationClip ab = CloneClip(assets.outfitAToB, pathMap);
-            AnimationClip bi = CloneClip(assets.outfitBIdle, pathMap);
-            AnimationClip ba = CloneClip(assets.outfitBToA, pathMap);
             runtimeOverride = new AnimatorOverrideController(assets.controller);
             runtimeOverride.name = "YB_Dissolve_FX__RuntimeRebound";
-            runtimeOverride[assets.outfitAIdle] = ai;
-            runtimeOverride[assets.outfitAToB] = ab;
-            runtimeOverride[assets.outfitBIdle] = bi;
-            runtimeOverride[assets.outfitBToA] = ba;
+            var overrides = new List<KeyValuePair<AnimationClip, AnimationClip>>();
+            runtimeOverride.GetOverrides(overrides);
+            for (int i = 0; i < overrides.Count; i++)
+            {
+                AnimationClip original = overrides[i].Key;
+                overrides[i] = new KeyValuePair<AnimationClip, AnimationClip>(original, CloneClip(original, pathMap));
+            }
+            runtimeOverride.ApplyOverrides(overrides);
             return runtimeOverride;
         }
 

@@ -38,16 +38,16 @@ namespace YBTools.Dissolve.Editor
         {
             if (profile == null) return "MA 安装检查失败：Profile 为空。";
             if (fx == null || fx.controller == null) return "MA 安装检查失败：FX Controller 尚未生成。";
-            if (string.IsNullOrWhiteSpace(profile.parameterName)) return "MA 安装检查失败：Bool 参数名为空。";
+            if (string.IsNullOrWhiteSpace(profile.parameterName)) return "MA 安装检查失败：参数名为空。";
             if (string.IsNullOrWhiteSpace(profile.menuName)) return "MA 安装检查失败：菜单名称为空。";
-            AnimatorControllerParameter fxParam = fx.controller.parameters.FirstOrDefault(p => p.name == profile.parameterName && p.type == AnimatorControllerParameterType.Bool);
-            if (fxParam == null) return "MA 安装检查失败：FX Controller 缺少 Bool 参数 " + profile.parameterName + "。";
+            string fxCheck = YBAnimatorFXBuilder.ValidateGenerated(profile, fx);
+            if (!fxCheck.StartsWith("Animator-FX 验证通过", StringComparison.Ordinal)) return fxCheck;
             if (profile.action != null && profile.action.enabled)
             {
                 if (action == null || action.controller == null)
                     return "MA 安装检查失败：已启用换装动作，但 Action Controller 尚未生成。\n这正是 Controller 生成后动作仍不播放的常见原因：Action Controller 必须通过 MA Merge Animator 合并到 VRC Action Layer。";
-                AnimatorControllerParameter ap = action.controller.parameters.FirstOrDefault(p => p.name == profile.parameterName && p.type == AnimatorControllerParameterType.Bool);
-                if (ap == null) return "MA 安装检查失败：Action Controller 缺少 Bool 参数 " + profile.parameterName + "。";
+                string actionCheck = YBAnimatorActionBuilder.ValidateGenerated(profile, action);
+                if (!actionCheck.StartsWith("Action Controller 验证通过", StringComparison.Ordinal)) return actionCheck;
             }
 
             string[] needed = { MergeAnimatorTypeName, ParametersTypeName, MenuInstallerTypeName, MenuItemTypeName };
@@ -56,7 +56,7 @@ namespace YBTools.Dissolve.Editor
 
             return "MA 安装检查通过：FX 将合并到 FX Layer" +
                    (profile.action != null && profile.action.enabled ? "；Action Controller 将合并到 Action Layer" : string.Empty) +
-                   "；共用 Bool 参数 " + profile.parameterName + "；菜单 Toggle=" + profile.menuName + "。";
+                   "；共用 " + ParameterType(profile) + " 参数 " + profile.parameterName + "；菜单=" + profile.menuName + "。";
         }
 
         internal static YBModularAvatarResult BuildPrefabAndInstall(
@@ -73,7 +73,7 @@ namespace YBTools.Dissolve.Editor
                     throw new InvalidOperationException("请退出 Play Mode 后安装 Modular Avatar。");
                 if (avatarRoot == null) throw new InvalidOperationException("Avatar Root 为空。");
                 string check = ValidateInputs(profile, fx, action);
-                if (check.IndexOf("通过", StringComparison.Ordinal) < 0) throw new InvalidOperationException(check);
+                if (!check.StartsWith("MA 安装检查通过", StringComparison.Ordinal)) throw new InvalidOperationException(check);
 
                 EnsureFolder(outputRoot.TrimEnd('/') + "/Prefab");
                 string prefabPath = GetPrefabPath(outputRoot);
@@ -112,7 +112,7 @@ namespace YBTools.Dissolve.Editor
                                  "\nHierarchy：" + GetRelativePath(avatarRoot.transform, instance.transform) +
                                  "\nFX Merge=FX/Absolute；" +
                                  (profile.action != null && profile.action.enabled ? "Action Merge=Action/Absolute；" : string.Empty) +
-                                 "Parameters=" + profile.parameterName + " Bool；Toggle=「" + profile.menuName + "」。";
+                                 "Parameters=" + profile.parameterName + " " + ParameterType(profile) + "；菜单=「" + profile.menuName + "」。";
             }
             catch (Exception ex)
             {
@@ -125,6 +125,7 @@ namespace YBTools.Dissolve.Editor
         internal static string ValidateInstalled(GameObject avatarRoot, YBDissolveProfile profile, YBAnimatorFXAssets fx, YBAnimatorActionAssets action)
         {
             if (avatarRoot == null) return "MA 验证失败：Avatar Root 为空。";
+            if (profile == null) return "MA 验证失败：Profile 为空。";
             Transform root = FindInstalledRoot(avatarRoot);
             if (root == null)
                 return "MA 验证失败：未找到「" + ContainerName + "」实例。\n" +
@@ -142,24 +143,53 @@ namespace YBTools.Dissolve.Editor
             Component actionMerge = merges.FirstOrDefault(m => string.Equals(Convert.ToString(GetFieldOrProperty(m, "layerType")), "Action", StringComparison.OrdinalIgnoreCase));
             if (fxMerge == null) return "MA 验证失败：缺少 FX Merge Animator。";
             RuntimeAnimatorController assignedFx = GetFieldOrProperty(fxMerge, "animator") as RuntimeAnimatorController;
-            if (fx != null && fx.controller != null && assignedFx != fx.controller) return "MA 验证失败：FX Merge 引用错误。";
+            if (assignedFx == null || (fx != null && assignedFx != fx.controller)) return "MA 验证失败：FX Merge 引用错误。";
 
-            bool actionEnabled = profile != null && profile.action != null && profile.action.enabled;
+            bool actionEnabled = profile.action != null && profile.action.enabled;
             if (actionEnabled)
             {
                 if (actionMerge == null) return "MA 验证失败：已启用动作但缺少 Action Merge Animator，因此动作不会播放。";
                 RuntimeAnimatorController assignedAction = GetFieldOrProperty(actionMerge, "animator") as RuntimeAnimatorController;
-                if (action != null && action.controller != null && assignedAction != action.controller) return "MA 验证失败：Action Merge 引用错误。";
+                if (assignedAction == null || (action != null && assignedAction != action.controller)) return "MA 验证失败：Action Merge 引用错误。";
             }
 
-            if (root.GetComponent(paramType) == null) return "MA 验证失败：缺少 MA Parameters。";
+            Component parameters = root.GetComponent(paramType);
+            if (parameters == null) return "MA 验证失败：缺少 MA Parameters。";
+            var parameterList = new SerializedObject(parameters).FindProperty("parameters");
+            if (parameterList == null || parameterList.arraySize != 1)
+                return "MA 验证失败：服装参数配置缺失，请重新安装。";
+            var parameter = parameterList.GetArrayElementAtIndex(0);
+            var syncType = parameter.FindPropertyRelative("syncType");
+            int typeIndex = syncType.enumValueIndex;
+            if (parameter.FindPropertyRelative("nameOrPrefix").stringValue != profile.parameterName ||
+                typeIndex < 0 || typeIndex >= syncType.enumNames.Length || syncType.enumNames[typeIndex] != ParameterType(profile) ||
+                !Mathf.Approximately(parameter.FindPropertyRelative("defaultValue").floatValue, ParameterDefault(profile)))
+                return "MA 验证失败：服装参数与 Profile 不一致，请重新安装。";
             Transform menu = root.Find(MenuObjectName);
             if (menu == null || menu.GetComponent(installerType) == null || menu.GetComponent(itemType) == null)
-                return "MA 验证失败：缺少菜单 Installer/Toggle。";
+                return "MA 验证失败：缺少菜单 Installer/Menu Item。";
+            Component menuItem = menu.GetComponent(itemType);
+            if (profile.HasMultipleOutfits)
+            {
+                if (Convert.ToString(GetFieldOrProperty(GetFieldOrProperty(menuItem, "Control"), "type")) != "SubMenu" ||
+                    Convert.ToString(GetFieldOrProperty(menuItem, "MenuSource")) != "Children" ||
+                    menu.childCount != profile.OutfitCount)
+                    return "MA 验证失败：换装子菜单与 Profile 不一致，请重新安装。";
+                for (int i = 0; i < profile.OutfitCount; i++)
+                {
+                    Component item = menu.GetChild(i).GetComponent(itemType);
+                    if (!MatchesToggle(item, profile.OutfitName(i), profile.parameterName, YBAnimatorFXBuilder.SelectionValue(i)))
+                        return "MA 验证失败：服装菜单项与 Profile 不一致，请重新安装。";
+                }
+            }
+            else if (!MatchesToggle(menuItem, profile.menuName, profile.parameterName, 1))
+            {
+                return "MA 验证失败：服装开关与 Profile 不一致，请重新安装。";
+            }
 
             string legacyNote = root.name == LegacyContainerName ? "\n注意：当前仍是旧实例名 " + LegacyContainerName + "，建议重新执行一次 MA 安装迁移为「" + ContainerName + "」。" : string.Empty;
             return "MA 安装验证通过：「" + root.name + "」；FX Merge ✓" + (actionEnabled ? "；Action Merge ✓" : string.Empty) +
-                   "；Parameters ✓；菜单 Toggle ✓。\n现在由同一个 " + profile.parameterName + " 同时驱动溶解与动作。" + legacyNote;
+                   "；Parameters ✓；菜单 ✓。\n换装参数：" + profile.parameterName + "。" + legacyNote;
         }
 
         internal static string Uninstall(GameObject avatarRoot)
@@ -265,13 +295,28 @@ namespace YBTools.Dissolve.Editor
             }
 
             Component parameters = root.AddComponent(paramType);
-            ConfigureParameters(parameters, profile.parameterName, profile.defaultOutfit == YBOutfitDefault.OutfitB, true, true);
+            ConfigureParameters(parameters, profile);
 
             GameObject menuGo = new GameObject(MenuObjectName);
             menuGo.transform.SetParent(root.transform, false);
             menuGo.AddComponent(installerType);
             Component menuItem = menuGo.AddComponent(itemType);
-            ConfigureMenuItem(menuItem, profile.menuName, profile.parameterName, profile.defaultOutfit == YBOutfitDefault.OutfitB, true, true);
+            if (profile.HasMultipleOutfits)
+            {
+                ConfigureMenuItem(menuItem, profile.menuName, null, 0, false);
+                SetEnumField(menuItem, "MenuSource", "Children", false);
+                for (int i = 0; i < profile.OutfitCount; i++)
+                {
+                    var option = new GameObject(YBDissolveProfile.OutfitGroup(i));
+                    option.transform.SetParent(menuGo.transform, false);
+                    ConfigureMenuItem(option.AddComponent(itemType), profile.OutfitName(i), profile.parameterName,
+                        YBAnimatorFXBuilder.SelectionValue(i), profile.DefaultOutfitIndex == i);
+                }
+            }
+            else
+            {
+                ConfigureMenuItem(menuItem, profile.menuName, profile.parameterName, 1, profile.DefaultOutfitIndex == 1);
+            }
             return root;
         }
 
@@ -287,31 +332,37 @@ namespace YBTools.Dissolve.Editor
             EditorUtility.SetDirty(merge);
         }
 
-        private static void ConfigureParameters(Component parameters, string parameterName, bool defaultValue, bool saved, bool synced)
+        private static string ParameterType(YBDissolveProfile profile) => profile.HasMultipleOutfits ? "Int" : "Bool";
+
+        private static int ParameterDefault(YBDissolveProfile profile) => profile.HasMultipleOutfits
+            ? YBAnimatorFXBuilder.SelectionValue(profile.DefaultOutfitIndex)
+            : profile.DefaultOutfitIndex;
+
+        private static void ConfigureParameters(Component parameters, YBDissolveProfile profile)
         {
             var so = new SerializedObject(parameters);
             SerializedProperty list = so.FindProperty("parameters");
             if (list == null || !list.isArray) throw new InvalidOperationException("MA Parameters 未找到 serialized field: parameters");
             list.arraySize = 1;
             SerializedProperty el = list.GetArrayElementAtIndex(0);
-            SetRelativeString(el, "nameOrPrefix", parameterName);
+            SetRelativeString(el, "nameOrPrefix", profile.parameterName);
             SetRelativeString(el, "remapTo", "", true);
             SetRelativeBool(el, "internalParameter", false);
             SetRelativeBool(el, "isPrefix", false, true);
-            SetRelativeEnum(el, "syncType", "Bool");
-            SetRelativeBool(el, "localOnly", !synced);
-            SetRelativeFloat(el, "defaultValue", defaultValue ? 1f : 0f);
-            SetRelativeBool(el, "saved", saved);
+            SetRelativeEnum(el, "syncType", ParameterType(profile));
+            SetRelativeBool(el, "localOnly", false);
+            SetRelativeFloat(el, "defaultValue", ParameterDefault(profile));
+            SetRelativeBool(el, "saved", true);
             SetRelativeBool(el, "hasExplicitDefaultValue", true);
             SetRelativeBool(el, "m_overrideAnimatorDefaults", true, true);
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 
-        private static void ConfigureMenuItem(Component menuItem, string label, string parameterName, bool defaultValue, bool saved, bool synced)
+        private static void ConfigureMenuItem(Component menuItem, string label, string parameterName, int value, bool isDefault)
         {
-            SetFieldOrProperty(menuItem, "isSynced", synced, true);
-            SetFieldOrProperty(menuItem, "isSaved", saved, true);
-            SetFieldOrProperty(menuItem, "isDefault", defaultValue, true);
+            SetFieldOrProperty(menuItem, "isSynced", true, true);
+            SetFieldOrProperty(menuItem, "isSaved", true, true);
+            SetFieldOrProperty(menuItem, "isDefault", isDefault, true);
             SetFieldOrProperty(menuItem, "automaticValue", false, true);
             SetFieldOrProperty(menuItem, "label", label, true);
 
@@ -320,16 +371,28 @@ namespace YBTools.Dissolve.Editor
             object control = controlField.GetValue(menuItem) ?? Activator.CreateInstance(controlField.FieldType);
             Type ct = control.GetType();
             SetMemberOnObject(control, ct, "name", label, true);
-            SetEnumMemberOnObject(control, ct, "type", "Toggle");
-            SetMemberOnObject(control, ct, "value", 1f, false);
+            SetEnumMemberOnObject(control, ct, "type", parameterName == null ? "SubMenu" : "Toggle");
+            SetMemberOnObject(control, ct, "value", (float)value, false);
 
             FieldInfo parameterField = ct.GetField("parameter", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (parameterField == null) throw new InvalidOperationException("VRCExpressionsMenu.Control 未找到 parameter 字段。");
             object parameter = parameterField.GetValue(control) ?? Activator.CreateInstance(parameterField.FieldType);
-            SetMemberOnObject(parameter, parameter.GetType(), "name", parameterName, false);
+            SetMemberOnObject(parameter, parameter.GetType(), "name", parameterName ?? string.Empty, false);
             parameterField.SetValue(control, parameter);
             controlField.SetValue(menuItem, control);
             EditorUtility.SetDirty(menuItem);
+        }
+
+        private static bool MatchesToggle(Component item, string label, string parameterName, int value)
+        {
+            object control = GetFieldOrProperty(item, "Control");
+            object parameter = GetFieldOrProperty(control, "parameter");
+            string actualLabel = GetFieldOrProperty(item, "label") as string;
+            if (string.IsNullOrEmpty(actualLabel)) actualLabel = GetFieldOrProperty(control, "name") as string;
+            return Convert.ToString(GetFieldOrProperty(control, "type")) == "Toggle" &&
+                   actualLabel == label &&
+                   Convert.ToString(GetFieldOrProperty(parameter, "name")) == parameterName &&
+                   Mathf.Approximately(Convert.ToSingle(GetFieldOrProperty(control, "value")), value);
         }
 
         private static Type FindType(string fullName)
