@@ -34,6 +34,13 @@ namespace YBTools.Dissolve.Editor
         [SerializeField] private string newProfileName = "OutfitA_OutfitB";
         [SerializeField] private List<GameObject> outfitARoots = new List<GameObject>();
         [SerializeField] private List<GameObject> outfitBRoots = new List<GameObject>();
+        [Serializable]
+        private sealed class OutfitSceneRoots
+        {
+            public List<GameObject> roots = new List<GameObject>();
+        }
+
+        [SerializeField] private List<OutfitSceneRoots> additionalRoots = new List<OutfitSceneRoots>();
         [SerializeField] private bool showOnlyIssues;
         [SerializeField] private float scanRangeEstimateMargin = 0.05f;
         [SerializeField] private bool allowOverwriteUv4;
@@ -91,7 +98,7 @@ namespace YBTools.Dissolve.Editor
             // Default to Chinese. EditorPrefs keeps the choice between window/editor sessions.
             uiLanguage = Mathf.Clamp(EditorPrefs.GetInt(LanguagePrefKey, 0), 0, LanguageNames.Length - 1);
             dependencies = YBDependencyDetector.Detect();
-            TryPickAvatarFromSelection();
+            if (avatarRoot == null) TryPickAvatarFromSelection();
         }
 
         private void OnDisable()
@@ -184,13 +191,21 @@ namespace YBTools.Dissolve.Editor
         private void DrawAvatarPage()
         {
             EditorGUILayout.LabelField(L("2. Avatar / Outfit 配置"), EditorStyles.largeLabel);
+            EditorGUI.BeginChangeCheck();
             avatarRoot = (GameObject)EditorGUILayout.ObjectField("Avatar Root", avatarRoot, typeof(GameObject), true);
             profile = (YBDissolveProfile)EditorGUILayout.ObjectField(L("当前 Profile"), profile, typeof(YBDissolveProfile), false);
+            if (EditorGUI.EndChangeCheck())
+            {
+                if (profile != null) LoadProfileBindings();
+                InvalidateOutfitLayout();
+            }
+
+            EnsureAdditionalSceneRoots();
 
             DrawHelpFoldout(ref showAvatarHelp, L("Profile 与 Outfit Root 说明"),
                 L("Profile 记录服装 Root 路径、扫描、动作、材质变体和菜单设置。\n") +
                 L("Root 可包含服装、发型或配饰等对象，分析时会递归收集 Renderer 并去重。\n") +
-                L("Profile 只存相对 Avatar Root 的路径，不保存场景对象引用。"));
+                string.Format(L("可配置 2 到 {0} 套服装。多套模式下每个 Renderer 只能归属一套。"), YBDissolveProfile.MaxOutfits));
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -202,17 +217,53 @@ namespace YBTools.Dissolve.Editor
             }
 
             EditorGUILayout.Space(4);
-            int defaultIndex = profile != null && profile.defaultOutfit == YBOutfitDefault.OutfitB ? 1 : 0;
-            int newDefaultIndex = EditorGUILayout.Popup(L("默认服装"), defaultIndex, new[] { L("服装 A"), L("服装 B") });
-            if (profile != null && newDefaultIndex != defaultIndex)
+            using (new EditorGUI.DisabledScope(profile == null))
             {
-                Undo.RecordObject(profile, "Change default outfit");
-                profile.defaultOutfit = newDefaultIndex == 0 ? YBOutfitDefault.OutfitA : YBOutfitDefault.OutfitB;
-                EditorUtility.SetDirty(profile);
+                int defaultIndex = profile != null ? profile.DefaultOutfitIndex : 0;
+                int selected = EditorGUILayout.Popup(L("默认服装"), defaultIndex, OutfitNames());
+                if (profile != null && selected != defaultIndex)
+                {
+                    Undo.RecordObject(profile, "Change default outfit");
+                    SetDefaultOutfit(selected);
+                    EditorUtility.SetDirty(profile);
+                    animatorAssets = null;
+                }
             }
 
-            DrawRootList(L("服装 A Roots（默认服装 A）"), outfitARoots);
-            DrawRootList(L("服装 B Roots（切换服装 B）"), outfitBRoots);
+            DrawOutfitRoots(0, outfitARoots);
+            DrawOutfitRoots(1, outfitBRoots);
+            for (int i = 0; i < additionalRoots.Count; i++)
+            {
+                bool remove;
+                using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+                {
+                    DrawOutfitRoots(i + 2, additionalRoots[i].roots);
+                    remove = GUILayout.Button(L("删除这套服装"));
+                }
+                if (!remove) continue;
+                Undo.RecordObjects(new UnityEngine.Object[] { profile, this }, "Remove outfit");
+                int removed = i + 2;
+                int previousDefault = profile.DefaultOutfitIndex;
+                profile.additionalOutfits.RemoveAt(i);
+                additionalRoots.RemoveAt(i);
+                if (previousDefault == removed) SetDefaultOutfit(0);
+                else if (previousDefault > removed) SetDefaultOutfit(previousDefault - 1);
+                EditorUtility.SetDirty(profile);
+                InvalidateOutfitLayout();
+                break;
+            }
+            using (new EditorGUI.DisabledScope(profile == null || profile.OutfitCount >= YBDissolveProfile.MaxOutfits))
+            {
+                if (GUILayout.Button(L("+ 添加服装")))
+                {
+                    Undo.RecordObjects(new UnityEngine.Object[] { profile, this }, "Add outfit");
+                    if (profile.additionalOutfits == null) profile.additionalOutfits = new List<YBOutfitBinding>();
+                    profile.additionalOutfits.Add(new YBOutfitBinding { displayName = YBDissolveProfile.OutfitGroup(profile.OutfitCount) });
+                    additionalRoots.Add(new OutfitSceneRoots());
+                    EditorUtility.SetDirty(profile);
+                    InvalidateOutfitLayout();
+                }
+            }
 
             YBEditorGUI.Section(L("Profile Scene Binding"));
             using (new EditorGUILayout.HorizontalScope())
@@ -220,7 +271,7 @@ namespace YBTools.Dissolve.Editor
                 using (new EditorGUI.DisabledScope(profile == null || avatarRoot == null))
                 {
                     if (GUILayout.Button(L("保存当前 Root 路径到 Profile")))
-                        YBProfileUtility.SaveSceneBindings(profile, avatarRoot, outfitARoots, outfitBRoots);
+                        YBProfileUtility.SaveSceneBindings(profile, avatarRoot, OutfitRoots());
                     if (GUILayout.Button(L("从 Profile 恢复 Root"))) LoadProfileBindings();
                 }
             }
@@ -231,7 +282,16 @@ namespace YBTools.Dissolve.Editor
                 {
                     if (GUILayout.Button(L("自动查找当前 Avatar 的 Profile"))) FindProfileForCurrentAvatar();
                 }
-                if (GUILayout.Button(L("从当前 Selection 识别 Avatar"))) TryPickAvatarFromSelection(true);
+                if (GUILayout.Button(L("从当前 Selection 识别 Avatar")))
+                {
+                    GameObject previous = avatarRoot;
+                    TryPickAvatarFromSelection(true);
+                    if (avatarRoot != previous)
+                    {
+                        if (profile != null) LoadProfileBindings();
+                        InvalidateOutfitLayout();
+                    }
+                }
                 using (new EditorGUI.DisabledScope(avatarRoot == null))
                 {
                     if (GUILayout.Button(L("创建 _YBToolsGenerated 输出目录"))) EnsureGeneratedFolders();
@@ -246,12 +306,12 @@ namespace YBTools.Dissolve.Editor
             using (new EditorGUI.DisabledScope(avatarRoot == null))
             {
                 if (GUILayout.Button(L("分析 Avatar / Outfit"), GUILayout.Height(34)))
-                    report = YBAvatarAnalyzer.Analyze(avatarRoot, outfitARoots, outfitBRoots);
+                    report = YBAvatarAnalyzer.Analyze(avatarRoot, OutfitRoots());
             }
 
             if (report == null)
             {
-                EditorGUILayout.HelpBox(L("尚未运行分析。先在 Avatar 页设置 Outfit A / B Roots。"), MessageType.Info);
+                EditorGUILayout.HelpBox(L("尚未运行分析。先在 Avatar 页设置各套服装的 Root。"), MessageType.Info);
                 return;
             }
 
@@ -373,7 +433,7 @@ namespace YBTools.Dissolve.Editor
                 EditorGUILayout.Space(4);
                 YBEditorGUI.Section(L("时间与速度"));
                 float durationSeconds = Mathf.Max(0.01f, EditorGUILayout.FloatField(
-                    new GUIContent(L("扫描持续时间（秒）"), L("两次换装共用同一个扫描持续时间。")),
+                    new GUIContent(L("扫描持续时间（秒）"), L("所有换装共用同一个扫描持续时间。")),
                     profile.scan.durationSeconds));
 
                 float delayAToB = Mathf.Max(0f, EditorGUILayout.FloatField(
@@ -382,10 +442,12 @@ namespace YBTools.Dissolve.Editor
                 float delayBToA = Mathf.Max(0f, EditorGUILayout.FloatField(
                     new GUIContent(L("服装 B → A 扫描前延迟"), L("切换回服装 A 后等待多久开始扫描。")),
                     profile.scan.GetDelayBToA()));
+                if (profile.HasMultipleOutfits)
+                    EditorGUILayout.HelpBox(L("包含新增服装的切换复用 A→B 的扫描延迟和可选换装动作。"), MessageType.Info);
 
                 AnimationClip forwardAction = profile.action != null ? profile.action.outfitAToB : null;
                 AnimationClip reverseAction = ResolveReverseActionClip(profile);
-                if (profile.action != null && profile.action.enabled)
+                if (profile.action != null && profile.action.enabled && !profile.HasMultipleOutfits)
                 {
                     using (new EditorGUILayout.HorizontalScope())
                     {
@@ -586,7 +648,9 @@ namespace YBTools.Dissolve.Editor
 
             DrawHelpFoldout(ref showVariantHelp, L("材质变体原理与使用说明"),
                 L("同一个 SkinnedMeshRenderer 可在 A/B 材质间扫描切换，不会新建第二个 Renderer；BlendShape、Viseme 和 EyeLook 仍由原 Renderer 控制。\n") +
-                L("安装变体后，要到 Animator/MA 页重新生成 FX，以写入四段材质切换曲线。"));
+                L("安装变体后，要到 Animator/MA 页重新生成 FX。"));
+            if (profile.HasMultipleOutfits)
+                EditorGUILayout.HelpBox(L("共用 Renderer 的材质变体仍配置 A 和 B 两种材质。新增服装使用 A 材质。"), MessageType.Info);
             showVariantAssetDetails = EditorGUILayout.Foldout(showVariantAssetDetails, L("显示路径与材质资产详情"), true);
 
             if (profile.materialVariants == null)
@@ -736,14 +800,17 @@ namespace YBTools.Dissolve.Editor
             {
                 EditorGUILayout.HelpBox(L("尚未有分析结果。生成前必须先运行分析。"), MessageType.Warning);
                 if (GUILayout.Button(L("立即分析 Avatar / Outfit"), GUILayout.Height(30)))
-                    report = YBAvatarAnalyzer.Analyze(avatarRoot, outfitARoots, outfitBRoots);
+                    report = YBAvatarAnalyzer.Analyze(avatarRoot, OutfitRoots());
                 return;
             }
+
+            string outputRoot = YBPathUtility.GetOrCreateProfileOutputRoot(avatarRoot, profile, newProfileName);
+            EnsureGeneratedAssetsResolvedOnce();
 
             using (new EditorGUILayout.HorizontalScope())
             {
                 if (GUILayout.Button(L("重新分析当前 Avatar")))
-                    report = YBAvatarAnalyzer.Analyze(avatarRoot, outfitARoots, outfitBRoots);
+                    report = YBAvatarAnalyzer.Analyze(avatarRoot, OutfitRoots());
                 if (GUILayout.Button(L("定位生成目录")))
                 {
                     string root = YBPathUtility.GetOrCreateProfileOutputRoot(avatarRoot, profile, newProfileName);
@@ -789,7 +856,11 @@ namespace YBTools.Dissolve.Editor
             if (allowOverwriteUv4)
                 EditorGUILayout.HelpBox(L("开启后只改写 UV4.x 为 Avatar Root 本地空间中沿扫描轴的投影值，并尽量保留 UV4.yzw。确认原 Shader/工具不依赖 UV4.x 后再使用。"), MessageType.Warning);
 
-            string preflight = YBGeneratedAssetBuilder.ValidatePreflight(profile, report, allowOverwriteUv4);
+            string preflight = profile.HasMultipleOutfits && installRecord != null
+                ? L("重新生成多套服装之前，请先在下方卸载当前服装资产，然后重新分析。")
+                : YBGeneratedAssetBuilder.ValidatePreflight(profile, report, allowOverwriteUv4);
+            if (profile.HasMultipleOutfits && report.outfitLayoutHash != YBProfileUtility.GetOutfitLayoutHash(avatarRoot, OutfitRoots()))
+                preflight = L("服装 Root 已更改，请重新分析、生成并安装服装资产。");
             if (string.IsNullOrEmpty(preflight))
                 EditorGUILayout.HelpBox(L("生成前检查通过。"), MessageType.Info);
             else
@@ -800,11 +871,11 @@ namespace YBTools.Dissolve.Editor
             {
                 if (GUILayout.Button(L("生成/刷新 Baked Mesh + Dissolve/Overlay（不安装）"), GUILayout.Height(38)))
                 {
-                    string root = YBPathUtility.GetOrCreateProfileOutputRoot(avatarRoot, profile, newProfileName);
-                    var generated = YBGeneratedAssetBuilder.Generate(avatarRoot, profile, report, root, allowOverwriteUv4);
+                    if (profile.HasMultipleOutfits) YBProfileUtility.SaveSceneBindings(profile, avatarRoot, OutfitRoots());
+                    var generated = YBGeneratedAssetBuilder.Generate(avatarRoot, profile, report, outputRoot, allowOverwriteUv4);
                     generationStatus = generated.message;
                     generationManifest = generated.manifest;
-                    installRecord = YBGeneratedAssetResolver.ResolveInstallRecord(root);
+                    installRecord = YBGeneratedAssetResolver.ResolveInstallRecord(outputRoot);
                     if (generated.success && generationManifest != null)
                     {
                         Selection.activeObject = generationManifest;
@@ -854,9 +925,6 @@ namespace YBTools.Dissolve.Editor
                 L("安装时替换 Mesh 与支持的材质槽，启用所需的 Outfit 对象和 Renderer，创建 __YBFinalOverlay__。\n") +
                 L("YBInstallRecord 记录原状态，可卸载恢复。动画、FX/Action Controller 与 MA 菜单需另行生成。"));
 
-            string outputRoot = YBPathUtility.GetOrCreateProfileOutputRoot(avatarRoot, profile, newProfileName);
-            EnsureGeneratedAssetsResolvedOnce();
-
             using (new EditorGUILayout.HorizontalScope())
             {
                 if (GUILayout.Button(L("加载安装记录")))
@@ -878,7 +946,7 @@ namespace YBTools.Dissolve.Editor
             {
                 string installPreflight = generationManifest == null
                     ? L("请先生成或加载 Generation Manifest。")
-                    : YBAvatarInstaller.ValidatePreflight(avatarRoot, profile, generationManifest, outputRoot);
+                    : ValidateCurrentOutfitLayout() ?? YBAvatarInstaller.ValidatePreflight(avatarRoot, profile, generationManifest, outputRoot);
 
                 if (string.IsNullOrEmpty(installPreflight))
                     EditorGUILayout.HelpBox(L("安装前检查通过。"), MessageType.Info);
@@ -1151,7 +1219,7 @@ namespace YBTools.Dissolve.Editor
             unresolvedManifestPath = generationManifest == null ? resolved.assetPath : string.Empty;
             manifestResolveStatus = resolved.message;
             installRecord = YBGeneratedAssetResolver.ResolveInstallRecord(root);
-            animatorAssets = YBAnimatorFXBuilder.LoadExisting(root);
+            animatorAssets = YBAnimatorFXBuilder.LoadExisting(root, profile);
             actionAssets = YBAnimatorActionBuilder.LoadExisting(root);
             materialVariantRecord = YBMaterialVariantBuilder.LoadExisting(root);
 
@@ -1232,8 +1300,8 @@ namespace YBTools.Dissolve.Editor
             }
 
             YBEditorGUI.Section(L("Animator-FX 设置"));
-            EditorGUILayout.LabelField(L("Bool 参数"), profile.parameterName);
-            EditorGUILayout.LabelField(L("默认服装"), profile.defaultOutfit == YBOutfitDefault.OutfitB ? L("服装 B") : L("服装 A"));
+            EditorGUILayout.LabelField(L(profile.HasMultipleOutfits ? "Int 参数" : "Bool 参数"), profile.parameterName);
+            EditorGUILayout.LabelField(L("默认服装"), L(profile.OutfitName(profile.DefaultOutfitIndex)));
             EditorGUILayout.LabelField(L("A → B 时间"),
                 string.Format(L("延迟 {0:0.###}s + 扫描 {1:0.###}s"), profile.scan.GetDelayAToB(), profile.scan.durationSeconds));
             EditorGUILayout.LabelField(L("B → A 时间"),
@@ -1245,15 +1313,17 @@ namespace YBTools.Dissolve.Editor
                 string.Format("{0:0.###} → {1:0.###}", profile.scan.startHeight, profile.scan.endHeight));
             animatorOverwriteExisting = EditorGUILayout.ToggleLeft(L("覆盖同名 AnimationClip / FX Controller"), animatorOverwriteExisting);
 
-            string preflight = YBAnimatorFXBuilder.ValidateInputs(avatarRoot, profile, generationManifest, installRecord, root);
-            MessageType preflightType = preflight.IndexOf("通过", StringComparison.Ordinal) >= 0 ? MessageType.Info : MessageType.Error;
+            string layoutIssue = ValidateCurrentOutfitLayout();
+            string preflight = layoutIssue ?? YBAnimatorFXBuilder.ValidateInputs(avatarRoot, profile, generationManifest, installRecord, root);
+            bool canGenerateFx = preflight.StartsWith("Animator-FX 输入检查通过", StringComparison.Ordinal);
+            MessageType preflightType = canGenerateFx ? MessageType.Info : MessageType.Error;
             EditorGUILayout.HelpBox(D(preflight), preflightType);
 
             using (new EditorGUI.DisabledScope(
                 EditorApplication.isPlayingOrWillChangePlaymode ||
-                preflight.IndexOf("通过", StringComparison.Ordinal) < 0))
+                !canGenerateFx))
             {
-                if (GUILayout.Button(L("生成 / 更新四段 FX Clip + FX Controller"), GUILayout.Height(34)))
+                if (GUILayout.Button(L("生成 / 更新 FX Clips + FX Controller"), GUILayout.Height(34)))
                 {
                     animatorAssets = YBAnimatorFXBuilder.Build(
                         avatarRoot, profile, generationManifest, installRecord, root, animatorOverwriteExisting);
@@ -1266,7 +1336,7 @@ namespace YBTools.Dissolve.Editor
                 }
             }
 
-            if (animatorAssets == null) animatorAssets = YBAnimatorFXBuilder.LoadExisting(root);
+            if (animatorAssets == null) animatorAssets = YBAnimatorFXBuilder.LoadExisting(root, profile);
             if (animatorAssets != null)
             {
                 showFxAssetDetails = EditorGUILayout.Foldout(showFxAssetDetails, L("已生成 FX 资产详情"), true);
@@ -1274,10 +1344,20 @@ namespace YBTools.Dissolve.Editor
                 {
                     using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
                     {
-                        EditorGUILayout.ObjectField(L("Outfit A Idle"), animatorAssets.outfitAIdle, typeof(AnimationClip), false);
-                        EditorGUILayout.ObjectField(L("Outfit A → B"), animatorAssets.outfitAToB, typeof(AnimationClip), false);
-                        EditorGUILayout.ObjectField(L("Outfit B Idle"), animatorAssets.outfitBIdle, typeof(AnimationClip), false);
-                        EditorGUILayout.ObjectField(L("Outfit B → A"), animatorAssets.outfitBToA, typeof(AnimationClip), false);
+                        if (animatorAssets.idleClips?.Length == profile.OutfitCount)
+                        {
+                            for (int from = 0; from < profile.OutfitCount; from++)
+                            {
+                                string name = L(profile.OutfitName(from));
+                                EditorGUILayout.ObjectField(name + " · " + L("待机"), animatorAssets.idleClips[from], typeof(AnimationClip), false);
+                                for (int to = 0; to < profile.OutfitCount; to++)
+                                {
+                                    if (from == to) continue;
+                                    EditorGUILayout.ObjectField(name + " → " + L(profile.OutfitName(to)),
+                                        animatorAssets.transitionClips[from, to], typeof(AnimationClip), false);
+                                }
+                            }
+                        }
                         EditorGUILayout.ObjectField(L("FX Controller"), animatorAssets.controller, typeof(RuntimeAnimatorController), false);
                     }
                 }
@@ -1319,7 +1399,7 @@ namespace YBTools.Dissolve.Editor
                 {
                     EditorGUILayout.ObjectField(L("Action Controller"),
                         actionAssets != null ? actionAssets.controller : null, typeof(RuntimeAnimatorController), false);
-                    EditorGUILayout.LabelField(L("共用参数"), profile.parameterName + L(" (Bool)"));
+                    EditorGUILayout.LabelField(L("共用参数"), profile.parameterName + (profile.HasMultipleOutfits ? " (Int)" : " (Bool)"));
                     EditorGUILayout.LabelField(L("动作接管"),
                         L("Action Weight 0↔1") +
                         (profile.action.controlTracking ? L(" / Tracking Animation↔Tracking") : string.Empty) +
@@ -1334,7 +1414,7 @@ namespace YBTools.Dissolve.Editor
             EditorGUILayout.LabelField(L("Controller 需合并到对应 Layer 才会生效。"), EditorStyles.miniLabel);
             DrawHelpFoldout(ref showMAHelp, L("MA 合并与菜单说明"),
                 L("FX Controller 合并到 FX Layer，Action Controller 合并到 Action Layer。\n") +
-                L("将 Profile 专用「溶解换装.prefab」安装到 Avatar，FX、Action 与菜单 Toggle 共用 Bool 参数。"));
+                L("将 Profile 专用「溶解换装.prefab」安装到 Avatar，FX、Action 与菜单共用同一个服装参数。"));
 
             GameObject maPrefabAsset = YBModularAvatarInstaller.LoadGeneratedPrefab(root);
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
@@ -1352,13 +1432,15 @@ namespace YBTools.Dissolve.Editor
                 }
             }
 
-            if (animatorAssets == null) animatorAssets = YBAnimatorFXBuilder.LoadExisting(root);
+            if (animatorAssets == null) animatorAssets = YBAnimatorFXBuilder.LoadExisting(root, profile);
             if (actionAssets == null) actionAssets = YBAnimatorActionBuilder.LoadExisting(root);
-            string maCheck = YBModularAvatarInstaller.ValidateInputs(profile, animatorAssets, actionAssets);
-            EditorGUILayout.HelpBox(D(maCheck), maCheck.IndexOf("通过", StringComparison.Ordinal) >= 0 ? MessageType.Info : MessageType.Error);
-            using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode || maCheck.IndexOf("通过", StringComparison.Ordinal) < 0))
+            string maCheck = profile.HasMultipleOutfits && !canGenerateFx ? preflight
+                : YBModularAvatarInstaller.ValidateInputs(profile, animatorAssets, actionAssets);
+            bool canInstallMA = maCheck.StartsWith("MA 安装检查通过", StringComparison.Ordinal);
+            EditorGUILayout.HelpBox(D(maCheck), canInstallMA ? MessageType.Info : MessageType.Error);
+            using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode || !canInstallMA))
             {
-                if (GUILayout.Button(L("生成「溶解换装」预制件并安装 FX + Action + Toggle"), GUILayout.Height(36)))
+                if (GUILayout.Button(L("生成「溶解换装」预制件并安装 Controller 和菜单"), GUILayout.Height(36)))
                 {
                     YBModularAvatarResult r = YBModularAvatarInstaller.BuildPrefabAndInstall(
                         avatarRoot, profile, animatorAssets, actionAssets, root);
@@ -1433,7 +1515,7 @@ namespace YBTools.Dissolve.Editor
                         validationStatus = YBAvatarInstaller.ValidateInstalled(avatarRoot, installRecord);
                     if (GUILayout.Button(L("验证 Animator-FX 资产")))
                     {
-                        animatorAssets = YBAnimatorFXBuilder.LoadExisting(root);
+                        animatorAssets = YBAnimatorFXBuilder.LoadExisting(root, profile);
                         validationStatus = YBAnimatorFXBuilder.ValidateGenerated(profile, animatorAssets);
                     }
                     if (GUILayout.Button(L("验证 Action Controller")))
@@ -1451,7 +1533,7 @@ namespace YBTools.Dissolve.Editor
                     }
                     if (GUILayout.Button(L("验证 MA / Action Merge")))
                     {
-                        animatorAssets = YBAnimatorFXBuilder.LoadExisting(root);
+                        animatorAssets = YBAnimatorFXBuilder.LoadExisting(root, profile);
                         actionAssets = YBAnimatorActionBuilder.LoadExisting(root);
                         validationStatus = YBModularAvatarInstaller.ValidateInstalled(avatarRoot, profile, animatorAssets, actionAssets);
                     }
@@ -1464,7 +1546,7 @@ namespace YBTools.Dissolve.Editor
 
             if (!Application.isPlaying)
             {
-                EditorGUILayout.HelpBox(L("进入 Play Mode 后可诊断 Renderer 路径并测试 A/B 双向 FX。"), MessageType.None);
+                EditorGUILayout.HelpBox(L("进入 Play Mode 后可诊断 Renderer 路径并测试服装切换。"), MessageType.None);
             }
 
             using (new EditorGUI.DisabledScope(!Application.isPlaying || installRecord == null))
@@ -1497,14 +1579,9 @@ namespace YBTools.Dissolve.Editor
 
                 if (YBAnimatorFXPreview.Active)
                 {
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        if (GUILayout.Button(L("服装 A  (参数=false)"), GUILayout.Height(30)))
-                            validationStatus = YBAnimatorFXPreview.SetValue(false);
-                        if (GUILayout.Button(L("服装 B  (参数=true)"), GUILayout.Height(30)))
-                            validationStatus = YBAnimatorFXPreview.SetValue(true);
-                    }
-                    EditorGUILayout.LabelField(L("当前参数值"), YBAnimatorFXPreview.CurrentValue ? L("true / 服装 B") : L("false / 服装 A"));
+                    int previous = YBAnimatorFXPreview.SelectedOutfit;
+                    int selected = EditorGUILayout.Popup(L("预览服装"), previous, OutfitNames());
+                    if (selected != previous) validationStatus = YBAnimatorFXPreview.SelectOutfit(selected);
                 }
             }
 
@@ -1529,8 +1606,8 @@ namespace YBTools.Dissolve.Editor
             float maxCoord = float.NegativeInfinity;
             var seen = new HashSet<Renderer>();
 
-            AccumulateRendererBounds(outfitARoots, seen, projectionAxis, ref found, ref minCoord, ref maxCoord);
-            AccumulateRendererBounds(outfitBRoots, seen, projectionAxis, ref found, ref minCoord, ref maxCoord);
+            foreach (var roots in OutfitRoots())
+                AccumulateRendererBounds(roots, seen, projectionAxis, ref found, ref minCoord, ref maxCoord);
 
             if (!found) return false;
             estimatedStart = maxCoord + scanRangeEstimateMargin;
@@ -1596,9 +1673,23 @@ namespace YBTools.Dissolve.Editor
             return p.action.reuseForwardClipWhenReverseMissing ? p.action.outfitAToB : null;
         }
 
-        private void DrawRootList(string title, List<GameObject> list)
+        private void DrawOutfitRoots(int index, List<GameObject> list)
         {
-            YBEditorGUI.Section(title);
+            YBEditorGUI.Section(profile != null ? L(profile.OutfitName(index)) : YBDissolveProfile.OutfitGroup(index));
+            if (profile != null && profile.HasMultipleOutfits)
+            {
+                var outfit = profile.GetOutfit(index);
+                string label = EditorGUILayout.TextField(L("服装名称"), outfit.displayName ?? string.Empty);
+                if (label != outfit.displayName)
+                {
+                    Undo.RecordObject(profile, "Rename outfit");
+                    outfit.displayName = label;
+                    EditorUtility.SetDirty(profile);
+                }
+            }
+
+            EditorGUI.BeginChangeCheck();
+            bool listChanged = false;
             for (int i = 0; i < list.Count; i++)
             {
                 using (new EditorGUILayout.HorizontalScope())
@@ -1608,10 +1699,65 @@ namespace YBTools.Dissolve.Editor
                     {
                         list.RemoveAt(i);
                         i--;
+                        listChanged = true;
                     }
                 }
             }
-            if (GUILayout.Button(L("+ 添加 Root"))) list.Add(null);
+            if (GUILayout.Button(L("+ 添加 Root")))
+                list.Add(null);
+            if (EditorGUI.EndChangeCheck() || listChanged) InvalidateOutfitLayout();
+        }
+
+        private void InvalidateOutfitLayout()
+        {
+            report = null;
+            animatorAssets = null;
+            actionAssets = null;
+            if (YBAnimatorFXPreview.Active) YBAnimatorFXPreview.Stop();
+            InvalidateGeneratedAssetResolveCache();
+        }
+
+        private void SetDefaultOutfit(int index)
+        {
+            profile.additionalDefaultOutfit = index >= 2 ? index : -1;
+            profile.defaultOutfit = index == 1 ? YBOutfitDefault.OutfitB : YBOutfitDefault.OutfitA;
+        }
+
+        private string[] OutfitNames()
+        {
+            if (profile == null) return new[] { L("服装 A"), L("服装 B") };
+            var names = new string[profile.OutfitCount];
+            for (int i = 0; i < names.Length; i++) names[i] = L(profile.OutfitName(i));
+            return names;
+        }
+
+        private void EnsureAdditionalSceneRoots()
+        {
+            int count = profile == null ? 0 : profile.OutfitCount - 2;
+            if (additionalRoots.Count > count) additionalRoots.RemoveRange(count, additionalRoots.Count - count);
+            while (additionalRoots.Count < count)
+            {
+                additionalRoots.Add(new OutfitSceneRoots
+                {
+                    roots = YBProfileUtility.ResolveSceneBindings(profile, avatarRoot, additionalRoots.Count + 2)
+                });
+            }
+        }
+
+        private List<List<GameObject>> OutfitRoots()
+        {
+            EnsureAdditionalSceneRoots();
+            var groups = new List<List<GameObject>> { outfitARoots, outfitBRoots };
+            foreach (var group in additionalRoots) groups.Add(group.roots);
+            return groups;
+        }
+
+        private string ValidateCurrentOutfitLayout()
+        {
+            if (!profile.HasMultipleOutfits || generationManifest == null) return null;
+            string current = YBProfileUtility.GetOutfitLayoutHash(avatarRoot, OutfitRoots());
+            return generationManifest.outfitLayoutHash == current ? null
+                : L("服装 Root 已更改，请重新分析、生成并安装服装资产。");
         }
 
         private void DrawAnalysisSummary()
@@ -1690,7 +1836,8 @@ namespace YBTools.Dissolve.Editor
             AssetDatabase.CreateAsset(created, path);
             AssetDatabase.SaveAssets();
             profile = created;
-            YBProfileUtility.SaveSceneBindings(profile, avatarRoot, outfitARoots, outfitBRoots);
+            InvalidateOutfitLayout();
+            YBProfileUtility.SaveSceneBindings(profile, avatarRoot, OutfitRoots());
             Selection.activeObject = profile;
             EditorGUIUtility.PingObject(profile);
         }
@@ -1747,8 +1894,11 @@ namespace YBTools.Dissolve.Editor
 
         private void LoadProfileBindings()
         {
-            outfitARoots = YBProfileUtility.ResolveSceneBindings(profile, avatarRoot, true);
-            outfitBRoots = YBProfileUtility.ResolveSceneBindings(profile, avatarRoot, false);
+            outfitARoots = YBProfileUtility.ResolveSceneBindings(profile, avatarRoot, 0);
+            outfitBRoots = YBProfileUtility.ResolveSceneBindings(profile, avatarRoot, 1);
+            additionalRoots.Clear();
+            EnsureAdditionalSceneRoots();
+            InvalidateOutfitLayout();
         }
 
         private void EnsureGeneratedFolders()

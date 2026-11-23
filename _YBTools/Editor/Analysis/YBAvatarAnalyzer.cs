@@ -19,8 +19,7 @@ namespace YBTools.Dissolve.Editor
 
         public static YBAnalysisReport Analyze(
             GameObject avatarRoot,
-            IList<GameObject> outfitARoots,
-            IList<GameObject> outfitBRoots)
+            IList<List<GameObject>> outfitRoots)
         {
             var report = new YBAnalysisReport();
             if (avatarRoot == null)
@@ -29,13 +28,20 @@ namespace YBTools.Dissolve.Editor
                 return report;
             }
 
-            var seen = new HashSet<int>();
-            CollectGroup(report, avatarRoot.transform, outfitARoots, "Outfit A", seen);
-            CollectGroup(report, avatarRoot.transform, outfitBRoots, "Outfit B", seen);
+            report.outfitLayoutHash = YBProfileUtility.GetOutfitLayoutHash(avatarRoot, outfitRoots);
+            var seen = new Dictionary<int, string>();
+            for (int i = 0; i < outfitRoots.Count; i++)
+            {
+                string group = YBDissolveProfile.OutfitGroup(i);
+                int start = report.renderers.Count;
+                CollectGroup(report, avatarRoot.transform, outfitRoots[i], group, seen, outfitRoots.Count > 2);
+                if (outfitRoots.Count > 2 && report.renderers.Count == start)
+                    AddBindingError(report, "未找到 Renderer", group + " 没有独立的服装 Renderer。");
+            }
 
             if (report.renderers.Count == 0)
             {
-                Add(report, YBAnalysisSeverity.Blocking, "未找到 Renderer", "Outfit A / B Root 下没有可分析的 Renderer。");
+                AddBindingError(report, "未找到 Renderer", "服装 Root 下没有可分析的 Renderer。");
                 return report;
             }
 
@@ -49,7 +55,8 @@ namespace YBTools.Dissolve.Editor
             Transform avatarRoot,
             IList<GameObject> roots,
             string groupName,
-            HashSet<int> seen)
+            Dictionary<int, string> seen,
+            bool requireExclusiveGroups)
         {
             if (roots == null) return;
 
@@ -60,8 +67,7 @@ namespace YBTools.Dissolve.Editor
 
                 if (!root.transform.IsChildOf(avatarRoot) && root.transform != avatarRoot)
                 {
-                    Add(report, YBAnalysisSeverity.Blocking,
-                        groupName + " Root 不属于 Avatar",
+                    AddBindingError(report, groupName + " Root 不属于 Avatar",
                         root.name + " 不在 " + avatarRoot.name + " 层级内。");
                     continue;
                 }
@@ -71,11 +77,25 @@ namespace YBTools.Dissolve.Editor
                 {
                     var renderer = renderers[r];
                     if (renderer == null || ShouldIgnore(renderer.gameObject.name)) continue;
-                    if (!seen.Add(renderer.GetInstanceID())) continue;
+                    int id = renderer.GetInstanceID();
+                    if (seen.TryGetValue(id, out string owner))
+                    {
+                        if (requireExclusiveGroups && owner != groupName)
+                            AddBindingError(report, "服装 Renderer 重复",
+                                owner + " / " + groupName + ": " + YBPathUtility.GetRelativePath(avatarRoot, renderer.transform));
+                        continue;
+                    }
+                    seen.Add(id, groupName);
 
                     report.renderers.Add(AnalyzeRenderer(avatarRoot, renderer, groupName));
                 }
             }
+        }
+
+        private static void AddBindingError(YBAnalysisReport report, string title, string detail)
+        {
+            report.outfitBindingErrors.Add(title + "：" + detail);
+            Add(report, YBAnalysisSeverity.Blocking, title, detail);
         }
 
         private static bool ShouldIgnore(string name)

@@ -4,13 +4,13 @@
 
 **版本：** 0.2.0 · **作者：** YungBurn · **许可协议：** [MIT License](LICENSE)
 
-为 **Unity / VRChat Avatar** 制作的服装扫描溶解与换装辅助工具。通过编辑器窗口分析两套 Outfit、生成扫描所需 Mesh 与材质，并按需配置 Animator、VRChat Action Controller 和 Modular Avatar。
+为 **Unity / VRChat Avatar** 制作的服装扫描溶解与换装辅助工具。支持 2 到 8 套服装，生成扫描所需 Mesh 与材质，并可生成 FX Controller、可选的 VRChat Action Controller 和 Modular Avatar 菜单。
 
 > 本仓库包含可编辑源码、Shader、说明文档和 Unity `.meta` 文件，不包含 Unity 完整工程、Avatar 模型或用户生成的资源。
 
 ## 功能特点
 
-- **双套服装切换：** 处理 Outfit A / B 的多个 Root 与 Renderer，提供分析和安装验证。
+- **多套服装直切**　每套可配置多个 Root。从换装菜单可直接选择任意一套。双套配置继续使用原来的开关。
 - **定向扫描溶解：** 在 Avatar Root 本地空间设置扫描移动方向，烘焙扫描坐标至 `UV4.x`；修改方向后需重新烘焙 Mesh。
 - **双向独立控制：** A→B、B→A 可分别设置扫描前延迟，并与动作时长对齐。
 - **材质与效果：** 支持扫描边缘、Overlay、Face / Body 材质变体，以及多种 lilToon 渲染模式。
@@ -38,12 +38,14 @@
 
 ## 快速开始
 
-1. 在 **Avatar** 页指定 Avatar Root、Outfit A / B 的 Root 与 Profile。
+1. 在 **Avatar** 页指定 Avatar Root 和 Profile。为每套服装添加 Root，可点击 **+ 添加服装** 并设置默认服装。
 2. 在 **分析** 页检查 Renderer、材质、Read/Write、UV4 等兼容状态。
 3. 在 **效果** 页设置扫描方向、范围及 A→B / B→A 的扫描延迟。
 4. 在 **生成/安装** 页创建 Baked Mesh 与材质，确认检查结果后执行安装。
 5. 可选：在 **材质变体** 页配置 Face / Body 变体，在 **Animator/MA** 页生成 FX、Action 和 MA 配置。
-6. 在 **验证** 页检查安装；需要时在 Unity Play Mode / VRChat 测试环境中进一步验证。
+6. 在 **验证** 页检查安装，进入 Unity Play Mode 试选不同服装。多套配置会生成按名称选择的 **换装** 子菜单。
+
+已有双套安装升级时，先卸载当前服装资产，再按新配置分析、生成、正式安装并更新 FX 和 Modular Avatar 菜单。多套配置使用一个 Int 参数。如果手动配置了同名 Bool 参数，请同步更新其类型。
 
 **重要：** 更改扫描方向后，旧 Mesh 中的 `UV4.x` 不会自动更新，请重新生成相关 Baked Mesh 并重新安装。
 

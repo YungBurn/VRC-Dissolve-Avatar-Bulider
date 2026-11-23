@@ -170,7 +170,7 @@ namespace YBTools.Dissolve.Editor
                 result.record = record;
                 result.message = string.Format(
                     "安装完成：Renderer {0}；材质槽 {1}；Overlay Renderer {2}。\n" +
-                    "两套 Outfit 已保持可渲染，默认视觉由 Profile 的 Role 决定；Overlay 默认强度为 0。\n安装记录：{3}",
+                    "服装已安装，默认外观由 Profile 决定；Overlay 默认强度为 0。\n安装记录：{3}",
                     record.installedRendererCount, record.installedMaterialSlotCount,
                     record.overlayRendererCount, recordPath);
                 return result;
@@ -269,6 +269,7 @@ namespace YBTools.Dissolve.Editor
             if (record == null) return "Play Mode 安装验证失败：YBInstallRecord 为空。";
 
             Renderer[] all = avatarRoot.GetComponentsInChildren<Renderer>(true);
+            bool controlsRendererEnabled = record.profile != null && record.profile.HasMultipleOutfits;
             int rendererOk = 0, meshOk = 0, materialOk = 0, overlayOk = 0, enabledOk = 0;
             int moved = 0;
             var details = new List<string>();
@@ -294,7 +295,7 @@ namespace YBTools.Dissolve.Editor
                 else details.Add("运行时材质扫描属性不兼容：" + actualPath);
 
                 if (r.enabled) enabledOk++;
-                else details.Add("Renderer.enabled=false：" + actualPath);
+                else if (!controlsRendererEnabled) details.Add("Renderer.enabled=false：" + actualPath);
 
                 if (!string.IsNullOrEmpty(rr.overlayObjectPath))
                 {
@@ -314,7 +315,7 @@ namespace YBTools.Dissolve.Editor
             int expected = record.renderers.Count;
             int expectedOverlays = record.renderers.Count(r => !string.IsNullOrEmpty(r.overlayObjectPath));
             bool ok = rendererOk == expected && meshOk == expected && materialOk == expected &&
-                      enabledOk == expected && overlayOk == expectedOverlays;
+                      (controlsRendererEnabled || enabledOk == expected) && overlayOk == expectedOverlays;
 
             var sb = new StringBuilder();
             sb.AppendFormat(

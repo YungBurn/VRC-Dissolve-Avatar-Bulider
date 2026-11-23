@@ -76,6 +76,7 @@ namespace YBTools.Dissolve.Editor
             manifestTemp.generatedUtc = DateTime.UtcNow.ToString("o");
             manifestTemp.avatarHint = avatarRoot.name;
             manifestTemp.profile = profile;
+            manifestTemp.outfitLayoutHash = report.outfitLayoutHash;
             manifestTemp.bakedScanDataVersion = YBToolVersion.BakedScanDataVersion;
             manifestTemp.bakedScanMoveDirection = profile.scan.GetMoveDirection();
             manifestTemp.sourceRendererCount = report.RendererCount;
@@ -124,14 +125,15 @@ namespace YBTools.Dissolve.Editor
                         needsBakedMesh = true;
                         int role = GetInitialRole(profile, analyzed.outfitGroup);
                         string sourceKey = GetSourceMaterialKey(slot.material, slot.assetGuid, analyzed.hierarchyPath, slot.slotIndex);
-                        string groupKey = analyzed.outfitGroup == "Outfit B" ? "B" : "A";
+                        string groupKey = GetGroupKey(analyzed.outfitGroup);
+                        Shader target = GetShader(resolved.mode, opaque, cutout, transparent, refraction, refractionBlur, fur, furCutout, furTwoPass, gem);
                         string dissolveKey = groupKey + "|" + sourceKey + "|" + resolved.mode + "|role=" + role;
                         Material dissolve;
                         if (!dissolveCache.TryGetValue(dissolveKey, out dissolve))
                         {
                             string matName = "YB_Dissolve_" + groupKey + "_" + SafeMaterialName(slot.materialName) + "_" + ShortHash(dissolveKey);
                             string path = dissolveFolder + "/" + matName + ".mat";
-                            dissolve = BuildDissolveMaterial(slot.material, GetShader(resolved.mode, opaque, cutout, transparent, refraction, refractionBlur, fur, furCutout, furTwoPass, gem), profile, role, path);
+                            dissolve = BuildDissolveMaterial(slot.material, target, profile, role, path);
                             dissolveCache[dissolveKey] = dissolve;
                             manifestTemp.generatedDissolveMaterialCount++;
                         }
@@ -154,7 +156,7 @@ namespace YBTools.Dissolve.Editor
 
                     if (needsBakedMesh)
                     {
-                        string meshName = "YB_Mesh_" + (analyzed.outfitGroup == "Outfit B" ? "B_" : "A_") +
+                        string meshName = "YB_Mesh_" + GetGroupKey(analyzed.outfitGroup) + "_" +
                                           YBPathUtility.SanitizeAssetName(analyzed.rendererName, "Renderer") + "_" + ShortHash(analyzed.hierarchyPath);
                         string meshPath = meshFolder + "/" + meshName + ".asset";
                         record.bakedMesh = YBBakedMeshBuilder.BuildOrUpdate(
@@ -247,8 +249,10 @@ namespace YBTools.Dissolve.Editor
 
         public static string ValidatePreflight(YBDissolveProfile profile, YBAnalysisReport report, bool allowOverwriteUv4)
         {
-            var errors = new List<string>();
             if (profile == null) return "Profile 为空。";
+            var errors = new List<string>(report.outfitBindingErrors);
+            if (profile.OutfitCount > YBDissolveProfile.MaxOutfits)
+                errors.Add("服装数量超过上限 " + YBDissolveProfile.MaxOutfits + "。");
             if (profile.scan.directionPreset == YBScanDirectionPreset.Custom &&
                 profile.scan.customDirection.sqrMagnitude < 0.000001f)
                 errors.Add("自定义扫描方向不能为 (0,0,0)");
@@ -342,10 +346,12 @@ namespace YBTools.Dissolve.Editor
 
         private static int GetInitialRole(YBDissolveProfile profile, string outfitGroup)
         {
-            bool isB = outfitGroup == "Outfit B";
-            bool defaultB = profile.defaultOutfit == YBOutfitDefault.OutfitB;
-            bool visibleByDefault = isB == defaultB;
-            return visibleByDefault ? 0 : 1;
+            return outfitGroup == YBDissolveProfile.OutfitGroup(profile.DefaultOutfitIndex) ? 0 : 1;
+        }
+
+        private static string GetGroupKey(string outfitGroup)
+        {
+            return string.IsNullOrEmpty(outfitGroup) ? "A" : outfitGroup.Substring(outfitGroup.Length - 1);
         }
 
         private static YBUnsupportedMaterialAction ActionForMode(YBMaterialRenderMode mode)

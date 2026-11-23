@@ -1,4 +1,7 @@
+using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using UnityEditor;
 using UnityEngine;
 
@@ -30,15 +33,14 @@ namespace YBTools.Dissolve.Editor
         public static void SaveSceneBindings(
             YBDissolveProfile profile,
             GameObject avatarRoot,
-            IList<GameObject> outfitA,
-            IList<GameObject> outfitB)
+            IList<List<GameObject>> outfitRoots)
         {
             if (profile == null || avatarRoot == null) return;
             Undo.RecordObject(profile, "Save YB Dissolve Profile bindings");
             profile.avatarHint = avatarRoot.name;
             profile.dataVersion = YBToolVersion.ProfileDataVersion;
-            profile.outfitA.rootPaths = BuildPaths(avatarRoot.transform, outfitA);
-            profile.outfitB.rootPaths = BuildPaths(avatarRoot.transform, outfitB);
+            for (int i = 0; i < profile.OutfitCount; i++)
+                profile.GetOutfit(i).rootPaths = BuildPaths(avatarRoot.transform, outfitRoots[i]);
             EditorUtility.SetDirty(profile);
             AssetDatabase.SaveAssets();
         }
@@ -46,11 +48,11 @@ namespace YBTools.Dissolve.Editor
         public static List<GameObject> ResolveSceneBindings(
             YBDissolveProfile profile,
             GameObject avatarRoot,
-            bool outfitA)
+            int outfitIndex)
         {
             var result = new List<GameObject>();
             if (profile == null || avatarRoot == null) return result;
-            var paths = outfitA ? profile.outfitA.rootPaths : profile.outfitB.rootPaths;
+            var paths = profile.GetOutfit(outfitIndex)?.rootPaths;
             if (paths == null) return result;
 
             for (int i = 0; i < paths.Count; i++)
@@ -60,6 +62,18 @@ namespace YBTools.Dissolve.Editor
                 if (t != null) result.Add(t.gameObject);
             }
             return result;
+        }
+
+        public static string GetOutfitLayoutHash(GameObject avatarRoot, IList<List<GameObject>> outfitRoots)
+        {
+            var layout = new StringBuilder();
+            foreach (var roots in outfitRoots)
+            {
+                layout.Append('|');
+                foreach (string path in BuildPaths(avatarRoot.transform, roots).Distinct().OrderBy(p => p, StringComparer.Ordinal))
+                    layout.Append(path.Length).Append(':').Append(path);
+            }
+            return Hash128.Compute(layout.ToString()).ToString();
         }
 
         private static List<string> BuildPaths(Transform avatarRoot, IList<GameObject> roots)

@@ -138,7 +138,7 @@ namespace YBTools.Dissolve.Editor
 
                     var mats = new List<Material>(sourceMaterials);
                     int appended = mats.Count;
-                    bool defaultA = profile.defaultOutfit != YBOutfitDefault.OutfitB;
+                    bool defaultA = profile.DefaultOutfitIndex != 1;
                     mats[v.materialSlot] = defaultA ? a0 : a1;
                     mats.Add(defaultA ? b1 : b0);
 
@@ -216,6 +216,14 @@ namespace YBTools.Dissolve.Editor
             EditorCurveBinding sourceBinding = AnimationUtility.GetCurveBindings(clip)
                 .FirstOrDefault(b => b.propertyName.IndexOf("_YBScanHeight", StringComparison.OrdinalIgnoreCase) >= 0);
             AnimationCurve sourceCurve = string.IsNullOrEmpty(sourceBinding.propertyName) ? null : AnimationUtility.GetEditorCurve(clip, sourceBinding);
+            ApplyBindings(clip, record, outfitAState, !outfitAState, sourceCurve);
+        }
+
+        internal static void ApplyBindings(AnimationClip clip, YBMaterialVariantInstallRecord record,
+            bool sourceUsesA, bool destinationUsesA, AnimationCurve sourceCurve)
+        {
+            if (clip == null || record == null || record.renderers == null || record.renderers.Count == 0) return;
+            bool swap = !sourceUsesA && destinationUsesA;
             float end = Mathf.Max(1f / 60f, clip.length);
 
             foreach (var rr in record.renderers)
@@ -230,10 +238,10 @@ namespace YBTools.Dissolve.Editor
                     EditorCurveBinding.FloatCurve(rr.rendererPath, typeof(Renderer), "material._YBScanDissolveEnabled"),
                     AnimationCurve.Constant(0f, end, 1f));
 
-                Material a = outfitAState ? rr.outfitARole0 : rr.outfitARole1;
-                Material bmat = outfitAState ? rr.outfitBRole1 : rr.outfitBRole0;
-                SetMaterialSlotCurve(clip, rr.rendererPath, rr.sourceSlot, a, end);
-                SetMaterialSlotCurve(clip, rr.rendererPath, rr.appendedSlot, bmat, end);
+                Material source = sourceUsesA ? rr.outfitARole0 : rr.outfitBRole0;
+                Material destination = destinationUsesA ? rr.outfitARole1 : rr.outfitBRole1;
+                SetMaterialSlotCurve(clip, rr.rendererPath, rr.sourceSlot, swap ? destination : source, end);
+                SetMaterialSlotCurve(clip, rr.rendererPath, rr.appendedSlot, swap ? source : destination, end);
             }
         }
 

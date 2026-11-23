@@ -4,13 +4,13 @@
 
 **Version:** 0.2.0 · **Author:** YungBurn · **License:** [MIT License](LICENSE)
 
-A Unity Editor tool for **VRChat avatar outfit transitions with directional scan-and-dissolve effects**. Analyze two outfits, generate baked meshes and materials, and optionally set up Animator, VRChat Action Controllers, and Modular Avatar integration.
+A Unity Editor tool for **VRChat avatar outfit transitions with directional scan-and-dissolve effects**. Configure two to eight outfits, generate baked meshes and materials, and optionally set up Animator, VRChat Action Controllers, and Modular Avatar integration.
 
 > This repository contains editable source code, shaders, documentation, and Unity `.meta` files. It does not include a complete Unity project, avatar models, or user-generated assets.
 
 ## Features
 
-- **Two-outfit workflow:** Analyze multiple roots and renderers for Outfit A / B, with installation validation.
+- **Direct outfit selection.** Each outfit can have multiple roots. Profiles with two outfits retain the original toggle.
 - **Directional dissolve:** Choose a scan direction in Avatar Root local space. The scan coordinate is baked into `UV4.x`; changing the direction requires rebaking.
 - **Independent A↔B timing:** Configure separate pre-scan delays for A→B and B→A, with optional action-duration alignment.
 - **Material effects:** Scan edge/glow, overlay, Face / Body material variants, and support for multiple lilToon rendering modes.
@@ -38,7 +38,7 @@ A Unity Editor tool for **VRChat avatar outfit transitions with directional scan
 
 ## Quick start
 
-1. In **Avatar**, assign Avatar Root, Outfit A / B roots, and a Profile.
+1. In **Avatar**, assign the Avatar Root and a Profile. Set the roots for each outfit and use **+ Add Outfit** for additional outfits. Choose the default outfit.
 2. In **Analysis**, inspect renderers, materials, Read/Write, and UV4 compatibility.
 3. In **Effects**, set scan direction, range, and independent A→B / B→A delays.
 4. In **Build / Install**, generate baked meshes and materials, then install after reviewing the validation results.

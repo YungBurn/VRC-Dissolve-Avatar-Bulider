@@ -128,6 +128,8 @@ namespace YBTools.Dissolve
         order = 1000)]
     public sealed class YBDissolveProfile : ScriptableObject
     {
+        public const int MaxOutfits = 8;
+
         [Header("Profile")]
         public int dataVersion = 3;
         public string avatarHint;
@@ -138,6 +140,36 @@ namespace YBTools.Dissolve
         [Header("Outfits")]
         public YBOutfitBinding outfitA = new YBOutfitBinding { displayName = "服装 A" };
         public YBOutfitBinding outfitB = new YBOutfitBinding { displayName = "服装 B" };
+        [HideInInspector] public List<YBOutfitBinding> additionalOutfits = new List<YBOutfitBinding>();
+        [HideInInspector] public int additionalDefaultOutfit = -1;
+
+        public int OutfitCount => 2 + (additionalOutfits?.Count ?? 0);
+        public bool HasMultipleOutfits => OutfitCount > 2;
+        public int DefaultOutfitIndex => additionalDefaultOutfit >= 2 && additionalDefaultOutfit < OutfitCount
+            ? additionalDefaultOutfit : (defaultOutfit == YBOutfitDefault.OutfitB ? 1 : 0);
+
+        public YBOutfitBinding GetOutfit(int index)
+        {
+            if (index == 0) return outfitA;
+            if (index == 1) return outfitB;
+            return additionalOutfits[index - 2];
+        }
+
+        public static string OutfitGroup(int index)
+        {
+            return "Outfit " + (char)('A' + index);
+        }
+
+        public string OutfitName(int index)
+        {
+            string label = GetOutfit(index)?.displayName;
+            return string.IsNullOrWhiteSpace(label) ? OutfitGroup(index) : label.Trim();
+        }
+
+        public float GetTransitionDelay(int from, int to)
+        {
+            return from == 1 && to == 0 ? scan.GetDelayBToA() : scan.GetDelayAToB();
+        }
 
         [Header("Scan")]
         public YBScanSettings scan = new YBScanSettings();

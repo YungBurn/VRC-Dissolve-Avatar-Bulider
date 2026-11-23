@@ -10,6 +10,7 @@ namespace YBTools.Dissolve
         public string generatedUtc;
         public string avatarHint;
         public YBDissolveProfile profile;
+        public string outfitLayoutHash;
 
         public int bakedScanDataVersion = 2;
         public Vector3 bakedScanMoveDirection = Vector3.down;

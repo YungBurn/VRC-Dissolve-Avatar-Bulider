@@ -10,10 +10,8 @@ namespace YBTools.Dissolve.Editor
 {
     internal sealed class YBAnimatorFXAssets
     {
-        public AnimationClip outfitAIdle;
-        public AnimationClip outfitAToB;
-        public AnimationClip outfitBIdle;
-        public AnimationClip outfitBToA;
+        public AnimationClip[] idleClips;
+        public AnimationClip[,] transitionClips;
         public AnimatorController controller;
         public string message;
         public bool success;
@@ -53,7 +51,7 @@ namespace YBTools.Dissolve.Editor
                 return "自定义扫描方向不能为 (0,0,0)。";
 
             string manifestValidation = YBGeneratedAssetBuilder.ValidateManifest(manifest);
-            if (manifestValidation.IndexOf("通过", StringComparison.Ordinal) < 0)
+            if (!manifestValidation.StartsWith("验证通过", StringComparison.Ordinal))
                 return "Generation Manifest 与当前 Profile 不匹配：\n" + manifestValidation;
 
             List<Target> targets;
@@ -63,6 +61,25 @@ namespace YBTools.Dissolve.Editor
             int overlay = targets.Count(t => t.overlay);
             if (main == 0) return "没有可绑定的主 Renderer。";
             if (overlay == 0) return "没有找到 Overlay Renderer。请先验证当前安装。";
+
+            if (profile.HasMultipleOutfits)
+            {
+                if (profile.OutfitCount > YBDissolveProfile.MaxOutfits)
+                    return "服装数量超过上限 " + YBDissolveProfile.MaxOutfits + "。";
+                var expected = Enumerable.Range(0, profile.OutfitCount).Select(YBDissolveProfile.OutfitGroup);
+                var installed = targets.Where(t => !t.overlay).Select(t => t.outfitGroup).Distinct();
+                if (!new HashSet<string>(expected, StringComparer.Ordinal).SetEquals(installed))
+                    return "当前配置与已安装的服装组不一致，请重新分析、生成并安装服装资产。";
+                if (installRecord.generationManifest != manifest ||
+                    (DateTimeOffset.TryParse(manifest.generatedUtc, out var generatedAt) &&
+                     DateTimeOffset.TryParse(installRecord.installedUtc, out var installedAt) && generatedAt > installedAt))
+                    return "服装资产已更新，请卸载当前服装资产后重新安装。";
+                return $"Animator-FX 输入检查通过：{profile.OutfitCount} 套服装，{profile.OutfitCount * (profile.OutfitCount - 1)} 个切换方向。\n" +
+                       $"参数：{profile.parameterName} (Int)，默认：{profile.OutfitName(profile.DefaultOutfitIndex)}。";
+            }
+
+            if (targets.Any(t => t.outfitGroup != "Outfit A" && t.outfitGroup != "Outfit B"))
+                return "已安装的服装组与当前双套配置不一致，请重新生成并安装服装资产。";
 
             float delayAToB = profile.scan.GetDelayAToB();
             float delayBToA = profile.scan.GetDelayBToA();
@@ -95,7 +112,7 @@ namespace YBTools.Dissolve.Editor
                     throw new InvalidOperationException("请退出 Play Mode 后生成 Animator-FX。 ");
 
                 string preflight = ValidateInputs(avatarRoot, profile, manifest, installRecord, outputRoot);
-                if (preflight.IndexOf("通过", StringComparison.Ordinal) < 0)
+                if (!preflight.StartsWith("Animator-FX 输入检查通过", StringComparison.Ordinal))
                     throw new InvalidOperationException(preflight);
 
                 List<Target> targets;
@@ -108,49 +125,59 @@ namespace YBTools.Dissolve.Editor
                 EnsureFolder(animDir);
                 EnsureFolder(controllerDir);
 
-                float delayAToB = profile.scan.GetDelayAToB();
-                float delayBToA = profile.scan.GetDelayBToA();
+                int count = profile.OutfitCount;
                 float duration = Mathf.Max(0.01f, profile.scan.durationSeconds);
-                float totalAToB = delayAToB + duration;
-                float totalBToA = delayBToA + duration;
                 float glowFade = Mathf.Min(GlowFadeDefault, Mathf.Max(0.02f, duration * 0.25f));
+                string controllerPath = controllerDir + "/YB_Dissolve_FX.controller";
+                var variantRecord = YBMaterialVariantBuilder.LoadExisting(outputRoot);
+                bool hasVariants = variantRecord?.renderers?.Count > 0;
 
-                var aIdle = BuildClip("YB_OutfitA_Idle", targets, profile, true, false, 0f, IdleLength, glowFade);
-                var aToB = BuildClip("YB_OutfitA_To_B", targets, profile, true, true, delayAToB, totalAToB, glowFade);
-                var bIdle = BuildClip("YB_OutfitB_Idle", targets, profile, false, false, 0f, IdleLength, glowFade);
-                var bToA = BuildClip("YB_OutfitB_To_A", targets, profile, false, true, delayBToA, totalBToA, glowFade);
-
-                // 可选材质变体：同一 Renderer 内追加 A/B SubMesh，Role 由材质版本固定。
-                YBMaterialVariantInstallRecord variantRecord = YBMaterialVariantBuilder.LoadExisting(outputRoot);
-                if (variantRecord != null && variantRecord.renderers != null && variantRecord.renderers.Count > 0)
+                result.idleClips = new AnimationClip[count];
+                result.transitionClips = new AnimationClip[count, count];
+                var paths = new List<string> { controllerPath };
+                for (int from = 0; from < count; from++)
                 {
-                    YBMaterialVariantBuilder.ApplyBindings(aIdle, variantRecord, true);
-                    YBMaterialVariantBuilder.ApplyBindings(aToB, variantRecord, true);
-                    YBMaterialVariantBuilder.ApplyBindings(bIdle, variantRecord, false);
-                    YBMaterialVariantBuilder.ApplyBindings(bToA, variantRecord, false);
+                    paths.Add(animDir + "/" + ClipName(from, from) + ".anim");
+                    for (int to = 0; to < count; to++)
+                        if (from != to) paths.Add(animDir + "/" + ClipName(from, to) + ".anim");
+                }
+                foreach (string path in paths)
+                {
+                    UnityEngine.Object existing = AssetDatabase.LoadMainAssetAtPath(path);
+                    if (existing == null) continue;
+                    bool matchesType = path == controllerPath ? existing is AnimatorController : existing is AnimationClip;
+                    if (!matchesType || !overwrite)
+                        throw new InvalidOperationException("FX 输出路径已有资产：" + path);
                 }
 
-                string aIdlePath = animDir + "/YB_OutfitA_Idle.anim";
-                string aToBPath = animDir + "/YB_OutfitA_To_B.anim";
-                string bIdlePath = animDir + "/YB_OutfitB_Idle.anim";
-                string bToAPath = animDir + "/YB_OutfitB_To_A.anim";
-                result.outfitAIdle = SaveClip(aIdle, aIdlePath, overwrite);
-                result.outfitAToB = SaveClip(aToB, aToBPath, overwrite);
-                result.outfitBIdle = SaveClip(bIdle, bIdlePath, overwrite);
-                result.outfitBToA = SaveClip(bToA, bToAPath, overwrite);
+                for (int from = 0; from < count; from++)
+                {
+                    result.idleClips[from] = BuildAndSaveClip(from, from, 0f, IdleLength);
+                    for (int to = 0; to < count; to++)
+                    {
+                        if (from == to) continue;
+                        float delay = profile.GetTransitionDelay(from, to);
+                        result.transitionClips[from, to] = BuildAndSaveClip(from, to, delay, delay + duration);
+                    }
+                }
 
-                string controllerPath = controllerDir + "/YB_Dissolve_FX.controller";
+                AnimationClip BuildAndSaveClip(int from, int to, float delay, float length)
+                {
+                    string name = ClipName(from, to);
+                    var clip = BuildClip(name, targets, profile, from, to, delay, length, glowFade);
+                    if (hasVariants && profile.HasMultipleOutfits)
+                        YBMaterialVariantBuilder.ApplyBindings(clip, variantRecord, from != 1, to != 1,
+                            from != to && (from == 1 || to == 1) ? ScanCurve(profile, delay) : Constant(length, profile.scan.startHeight));
+                    else if (hasVariants)
+                        YBMaterialVariantBuilder.ApplyBindings(clip, variantRecord, from == 0);
+                    return SaveClip(clip, animDir + "/" + name + ".anim", overwrite);
+                }
+
                 result.controller = BuildController(profile, result, controllerPath, overwrite);
-
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
                 result.success = true;
-                result.message = "Animator-FX 已生成/更新：\n" +
-                                 aIdlePath + "\n" + aToBPath + "\n" + bIdlePath + "\n" + bToAPath + "\n" + controllerPath +
-                                 "\n\n四个 State 均为 Write Defaults Off；换装过程中不允许中途打断。" +
-                                 (variantRecord != null && variantRecord.renderers != null && variantRecord.renderers.Count > 0
-                                     ? "\n已写入材质变体：" + variantRecord.renderers.Count + " 个 Renderer。"
-                                     : string.Empty);
+                result.message = $"Animator-FX 已生成：{count} 个待机 Clip，{count * (count - 1)} 个切换 Clip。\n" + controllerPath;
                 return result;
             }
             catch (Exception ex)
@@ -162,44 +189,89 @@ namespace YBTools.Dissolve.Editor
             }
         }
 
-        public static YBAnimatorFXAssets LoadExisting(string outputRoot)
+        public static YBAnimatorFXAssets LoadExisting(string outputRoot, YBDissolveProfile profile)
         {
-            var r = new YBAnimatorFXAssets();
-            if (string.IsNullOrEmpty(outputRoot)) return r;
-            string a = outputRoot.TrimEnd('/') + "/Animations";
-            string c = outputRoot.TrimEnd('/') + "/Animator/YB_Dissolve_FX.controller";
-            r.outfitAIdle = AssetDatabase.LoadAssetAtPath<AnimationClip>(a + "/YB_OutfitA_Idle.anim");
-            r.outfitAToB = AssetDatabase.LoadAssetAtPath<AnimationClip>(a + "/YB_OutfitA_To_B.anim");
-            r.outfitBIdle = AssetDatabase.LoadAssetAtPath<AnimationClip>(a + "/YB_OutfitB_Idle.anim");
-            r.outfitBToA = AssetDatabase.LoadAssetAtPath<AnimationClip>(a + "/YB_OutfitB_To_A.anim");
-            r.controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(c);
-            r.success = r.outfitAIdle != null && r.outfitAToB != null && r.outfitBIdle != null && r.outfitBToA != null && r.controller != null;
-            r.message = r.success ? "已识别现有 Animator-FX 资产。" : "Animator-FX 资产尚未完整生成。";
-            return r;
+            var assets = new YBAnimatorFXAssets();
+            if (string.IsNullOrEmpty(outputRoot) || profile == null || profile.OutfitCount > YBDissolveProfile.MaxOutfits)
+                return assets;
+
+            int count = profile.OutfitCount;
+            string root = outputRoot.TrimEnd('/');
+            assets.idleClips = new AnimationClip[count];
+            assets.transitionClips = new AnimationClip[count, count];
+            assets.controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(root + "/Animator/YB_Dissolve_FX.controller");
+            for (int from = 0; from < count; from++)
+            {
+                assets.idleClips[from] = LoadClip(from, from);
+                for (int to = 0; to < count; to++)
+                    if (from != to) assets.transitionClips[from, to] = LoadClip(from, to);
+            }
+
+            AnimationClip LoadClip(int from, int to) =>
+                AssetDatabase.LoadAssetAtPath<AnimationClip>(root + "/Animations/" + ClipName(from, to) + ".anim");
+
+            assets.message = ValidateGenerated(profile, assets);
+            assets.success = assets.message.StartsWith("Animator-FX 验证通过", StringComparison.Ordinal);
+            return assets;
         }
 
         public static string ValidateGenerated(YBDissolveProfile profile, YBAnimatorFXAssets assets)
         {
             if (profile == null) return "Profile 为空。";
-            if (assets == null) return "Animator-FX 资产为空。";
-            var missing = new List<string>();
-            if (assets.outfitAIdle == null) missing.Add("YB_OutfitA_Idle.anim");
-            if (assets.outfitAToB == null) missing.Add("YB_OutfitA_To_B.anim");
-            if (assets.outfitBIdle == null) missing.Add("YB_OutfitB_Idle.anim");
-            if (assets.outfitBToA == null) missing.Add("YB_OutfitB_To_A.anim");
-            if (assets.controller == null) missing.Add("YB_Dissolve_FX.controller");
-            if (missing.Count > 0) return "Animator-FX 验证失败，缺少：\n• " + string.Join("\n• ", missing.ToArray());
+            int count = profile.OutfitCount;
+            if (assets?.controller == null || assets.idleClips?.Length != count || assets.transitionClips?.GetLength(0) != count)
+                return "Animator-FX 验证失败：FX 资产不完整，请重新生成。";
+            if (!HasSelectionParameter(profile, assets.controller))
+                return "Animator-FX 验证失败：Controller 的服装参数类型或默认值与 Profile 不一致，请重新生成。";
 
-            bool hasParam = assets.controller.parameters.Any(p => p.name == profile.parameterName && p.type == AnimatorControllerParameterType.Bool);
-            if (!hasParam) return "Animator-FX 验证失败：Controller 没有 Bool 参数 " + profile.parameterName + "。";
-            if (assets.outfitAToB.length < profile.scan.GetDelayAToB() + profile.scan.durationSeconds - 0.05f)
-                return "Animator-FX 验证失败：A→B Clip 长度短于 A→B Delay+Duration。";
-            if (assets.outfitBToA.length < profile.scan.GetDelayBToA() + profile.scan.durationSeconds - 0.05f)
-                return "Animator-FX 验证失败：B→A Clip 长度短于 B→A Delay+Duration。";
+            var layer = assets.controller.layers.FirstOrDefault();
+            var stateMachine = layer?.stateMachine;
+            if (stateMachine == null || stateMachine.states.Length != count * count || stateMachine.defaultState == null ||
+                stateMachine.defaultState?.motion != assets.idleClips[profile.DefaultOutfitIndex])
+                return "Animator-FX 验证失败：Controller 的服装状态与 Profile 不一致，请重新生成。";
 
-            return string.Format(
-                "Animator-FX 验证通过：\n参数 {0}；A→B {1:0.###}s；B→A {2:0.###}s；Controller={3}",
-                profile.parameterName, assets.outfitAToB.length, assets.outfitBToA.length, AssetDatabase.GetAssetPath(assets.controller));
+            var motions = new HashSet<Motion>(stateMachine.states.Select(s => s.state?.motion));
+            for (int from = 0; from < count; from++)
+            {
+                if (assets.idleClips[from] == null || !motions.Contains(assets.idleClips[from]))
+                    return "Animator-FX 验证失败：缺少待机 Clip " + ClipName(from, from);
+                for (int to = 0; to < count; to++)
+                {
+                    if (from == to) continue;
+                    AnimationClip clip = assets.transitionClips[from, to];
+                    float expected = profile.GetTransitionDelay(from, to) + Mathf.Max(0.01f, profile.scan.durationSeconds);
+                    if (clip == null || !motions.Contains(clip) || Mathf.Abs(clip.length - expected) > 0.05f)
+                        return "Animator-FX 验证失败：切换 Clip 缺失或时长已过期 " + ClipName(from, to);
+                }
+            }
+            return $"Animator-FX 验证通过：{count} 套服装，参数 {profile.parameterName}。";
+        }
+
+        private static string ClipName(int from, int to)
+        {
+            string prefix = "YB_Outfit" + (char)('A' + from);
+            return from == to ? prefix + "_Idle" : prefix + "_To_" + (char)('A' + to);
+        }
+
+        internal static int SelectionValue(int index) => index + 1;
+
+        internal static void AddSelectionParameter(AnimatorController controller, YBDissolveProfile profile)
+        {
+            controller.AddParameter(new AnimatorControllerParameter
+            {
+                name = profile.parameterName,
+                type = profile.HasMultipleOutfits ? AnimatorControllerParameterType.Int : AnimatorControllerParameterType.Bool,
+                defaultInt = SelectionValue(profile.DefaultOutfitIndex),
+                defaultBool = profile.DefaultOutfitIndex == 1
+            });
+        }
+
+        internal static bool HasSelectionParameter(YBDissolveProfile profile, AnimatorController controller)
+        {
+            return controller.parameters.Any(p => p.name == profile.parameterName &&
+                (profile.HasMultipleOutfits
+                    ? p.type == AnimatorControllerParameterType.Int && p.defaultInt == SelectionValue(profile.DefaultOutfitIndex)
+                    : p.type == AnimatorControllerParameterType.Bool && p.defaultBool == (profile.DefaultOutfitIndex == 1)));
         }
 
         private static bool TryBuildTargets(
@@ -279,32 +351,41 @@ namespace YBTools.Dissolve.Editor
             string name,
             IList<Target> targets,
             YBDissolveProfile profile,
-            bool outfitARoleZero,
-            bool transition,
+            int from,
+            int to,
             float delay,
             float length,
             float glowFade)
         {
             var clip = new AnimationClip { name = name, frameRate = 60f, legacy = false };
+            bool transition = from != to;
             float start = profile.scan.startHeight;
-            float end = profile.scan.endHeight;
+            string sourceGroup = YBDissolveProfile.OutfitGroup(from);
+            string destinationGroup = YBDissolveProfile.OutfitGroup(to);
+            AnimationCurve still = Constant(length, start);
+            AnimationCurve scan = transition ? ScanCurve(profile, delay) : still;
+            AnimationCurve glow = transition
+                ? GlowCurve(delay, Mathf.Max(0.01f, length - delay), glowFade, profile.scan.scanIntensity)
+                : Constant(length, 0f);
+            AnimationCurve off = Constant(length, 0f);
+            AnimationCurve on = Constant(length, 1f);
 
-            for (int i = 0; i < targets.Count; i++)
+            foreach (Target t in targets)
             {
-                Target t = targets[i];
-                bool isA = string.Equals(t.outfitGroup, "Outfit A", StringComparison.Ordinal);
-                float role = outfitARoleZero ? (isA ? 0f : 1f) : (isA ? 1f : 0f);
+                bool source = t.outfitGroup == sourceGroup;
+                bool participates = source || t.outfitGroup == destinationGroup;
+                if (profile.HasMultipleOutfits)
+                    SetCurve(clip, t, "m_Enabled", participates && (!t.overlay || transition) ? on : off);
 
-                SetCurve(clip, t, "material._YBScanHeight", transition ? ScanCurve(profile, delay) : Constant(length, start));
+                SetCurve(clip, t, "material._YBScanHeight", participates || !profile.HasMultipleOutfits ? scan : still);
                 if (!t.overlay)
                 {
-                    SetCurve(clip, t, "material._YBScanRole", Constant(length, role));
-                    SetCurve(clip, t, "material._YBScanDissolveEnabled", Constant(length, 1f));
+                    SetCurve(clip, t, "material._YBScanRole", source ? off : on);
+                    SetCurve(clip, t, "material._YBScanDissolveEnabled", on);
                 }
                 else
                 {
-                    SetCurve(clip, t, "material._YBScanIntensity",
-                        transition ? GlowCurve(delay, Mathf.Max(0.01f, length - delay), glowFade, profile.scan.scanIntensity) : Constant(length, 0f));
+                    SetCurve(clip, t, "material._YBScanIntensity", participates || !profile.HasMultipleOutfits ? glow : off);
                 }
             }
 
@@ -407,29 +488,32 @@ namespace YBTools.Dissolve.Editor
             }
 
             AnimatorController c = AnimatorController.CreateAnimatorControllerAtPath(path);
-            c.AddParameter(new AnimatorControllerParameter
-            {
-                name = profile.parameterName,
-                type = AnimatorControllerParameterType.Bool,
-                defaultBool = profile.defaultOutfit == YBOutfitDefault.OutfitB
-            });
+            AddSelectionParameter(c, profile);
 
             AnimatorControllerLayer layer = c.layers[0];
             layer.name = "YB Dissolve Outfit";
             layer.defaultWeight = 1f;
+            c.layers = new[] { layer };
             AnimatorStateMachine sm = layer.stateMachine;
-            sm.name = "YB Dissolve Outfit";
+            sm.name = layer.name;
 
-            AnimatorState aIdle = AddState(sm, "OutfitAIdle", assets.outfitAIdle, new Vector3(160, 90, 0));
-            AnimatorState aToB = AddState(sm, "OutfitAToB", assets.outfitAToB, new Vector3(410, 90, 0));
-            AnimatorState bIdle = AddState(sm, "OutfitBIdle", assets.outfitBIdle, new Vector3(660, 90, 0));
-            AnimatorState bToA = AddState(sm, "OutfitBToA", assets.outfitBToA, new Vector3(410, 260, 0));
-            sm.defaultState = profile.defaultOutfit == YBOutfitDefault.OutfitB ? bIdle : aIdle;
+            int count = profile.OutfitCount;
+            var idle = new AnimatorState[count];
+            for (int i = 0; i < count; i++)
+                idle[i] = AddState(sm, "Outfit" + (char)('A' + i) + "Idle", assets.idleClips[i], new Vector3(180 + 250 * i, 90, 0));
+            sm.defaultState = idle[profile.DefaultOutfitIndex];
 
-            AddBoolTransition(aIdle, aToB, true, profile.parameterName);
-            AddExitTransition(aToB, bIdle);
-            AddBoolTransition(bIdle, bToA, false, profile.parameterName);
-            AddExitTransition(bToA, aIdle);
+            for (int from = 0; from < count; from++)
+            {
+                for (int to = 0; to < count; to++)
+                {
+                    if (from == to) continue;
+                    AnimationClip clip = assets.transitionClips[from, to];
+                    AnimatorState transition = AddState(sm, clip.name, clip, new Vector3(180 + 250 * to, 190 + 70 * from, 0));
+                    AddSelectionTransition(idle[from], transition, profile, to);
+                    AddExitTransition(transition, idle[to]);
+                }
+            }
 
             EditorUtility.SetDirty(c);
             return c;
@@ -444,26 +528,38 @@ namespace YBTools.Dissolve.Editor
             return s;
         }
 
-        private static void AddBoolTransition(AnimatorState from, AnimatorState to, bool value, string parameter)
+        internal static void AddSelectionTransition(
+            AnimatorState from, AnimatorState to, YBDissolveProfile profile, int outfitIndex, float blend = 0f)
         {
-            AnimatorStateTransition t = from.AddTransition(to);
-            t.hasExitTime = false;
-            t.hasFixedDuration = true;
-            t.duration = 0f;
-            t.canTransitionToSelf = false;
-            t.interruptionSource = TransitionInterruptionSource.None;
-            t.AddCondition(value ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot, 0f, parameter);
+            if (!profile.HasMultipleOutfits)
+            {
+                AddTransition(from, to, false, blend).AddCondition(
+                    outfitIndex == 1 ? AnimatorConditionMode.If : AnimatorConditionMode.IfNot, 0f, profile.parameterName);
+                return;
+            }
+
+            AddTransition(from, to, false, blend).AddCondition(
+                AnimatorConditionMode.Equals, SelectionValue(outfitIndex), profile.parameterName);
+            // Turning off a VRChat Toggle writes zero. Use that value to return to the configured default.
+            if (outfitIndex == profile.DefaultOutfitIndex)
+                AddTransition(from, to, false, blend).AddCondition(AnimatorConditionMode.Equals, 0f, profile.parameterName);
         }
 
-        private static void AddExitTransition(AnimatorState from, AnimatorState to)
+        internal static void AddExitTransition(AnimatorState from, AnimatorState to, float blend = 0f)
+        {
+            AddTransition(from, to, true, blend);
+        }
+
+        private static AnimatorStateTransition AddTransition(AnimatorState from, AnimatorState to, bool exit, float blend)
         {
             AnimatorStateTransition t = from.AddTransition(to);
-            t.hasExitTime = true;
-            t.exitTime = 1f;
+            t.hasExitTime = exit;
+            if (exit) t.exitTime = 1f;
             t.hasFixedDuration = true;
-            t.duration = 0f;
+            t.duration = Mathf.Max(0f, blend);
             t.canTransitionToSelf = false;
             t.interruptionSource = TransitionInterruptionSource.None;
+            return t;
         }
 
         private static void SetLoopTime(AnimationClip clip, bool loop)

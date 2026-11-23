@@ -69,6 +69,8 @@ namespace YBTools.Dissolve.Editor
     {
         public readonly List<YBRendererAnalysis> renderers = new List<YBRendererAnalysis>();
         public readonly List<YBAnalysisMessage> messages = new List<YBAnalysisMessage>();
+        public readonly List<string> outfitBindingErrors = new List<string>();
+        public string outfitLayoutHash;
 
         public int RendererCount => renderers.Count;
         public int MaterialSlotCount

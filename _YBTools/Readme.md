@@ -8,7 +8,7 @@ Unity Editor / VRChat Avatar 的 lilToon 扫描溶解换装工具，具有中文
 
 ## 功能
 
-- Outfit A / B 多 Root、Renderer 分析与安装验证
+- 2 到 8 套服装直接切换，每套可配置多个 Root，支持 Renderer 分析与安装验证
 - Avatar 本地任意方向扫描、Mesh `UV4.x` 数据烘焙及双向独立延迟
 - lilToon Opaque / Cutout / Transparent / Refraction / Fur / Gem 等材质模式
 - Overlay、Face / Body 材质变体、FX、可选 VRChat Action 与 Modular Avatar 配置
