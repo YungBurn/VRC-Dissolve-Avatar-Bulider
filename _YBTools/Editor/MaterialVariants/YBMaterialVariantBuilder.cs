@@ -116,6 +116,7 @@ namespace YBTools.Dissolve.Editor
                 temp.toolVersion = YBToolVersion.Version;
                 temp.avatarHint = avatarRoot.name;
                 temp.profile = profile;
+                var pcss = new YBPcssLighting(avatarRoot);
 
                 for (int i = 0; i < profile.materialVariants.Count; i++)
                 {
@@ -131,10 +132,10 @@ namespace YBTools.Dissolve.Editor
                         profile.scan.GetMoveDirection());
                     AppendDuplicateSubmesh(generated, v.materialSlot);
 
-                    Material a0 = BuildRoleMaterial(v.outfitAMaterial, 0f, profile, matDir + "/YB_" + safe + "_A_Role0.mat");
-                    Material a1 = BuildRoleMaterial(v.outfitAMaterial, 1f, profile, matDir + "/YB_" + safe + "_A_Role1.mat");
-                    Material b0 = BuildRoleMaterial(v.outfitBMaterial, 0f, profile, matDir + "/YB_" + safe + "_B_Role0.mat");
-                    Material b1 = BuildRoleMaterial(v.outfitBMaterial, 1f, profile, matDir + "/YB_" + safe + "_B_Role1.mat");
+                    Material a0 = BuildRoleMaterial(v.outfitAMaterial, 0f, profile, matDir + "/YB_" + safe + "_A_Role0.mat", r, pcss);
+                    Material a1 = BuildRoleMaterial(v.outfitAMaterial, 1f, profile, matDir + "/YB_" + safe + "_A_Role1.mat", r, pcss);
+                    Material b0 = BuildRoleMaterial(v.outfitBMaterial, 0f, profile, matDir + "/YB_" + safe + "_B_Role0.mat", r, pcss);
+                    Material b1 = BuildRoleMaterial(v.outfitBMaterial, 1f, profile, matDir + "/YB_" + safe + "_B_Role1.mat", r, pcss);
 
                     var mats = new List<Material>(sourceMaterials);
                     int appended = mats.Count;
@@ -293,20 +294,22 @@ namespace YBTools.Dissolve.Editor
             EditorUtility.SetDirty(mesh);
         }
 
-        private static Material BuildRoleMaterial(Material source, float role, YBDissolveProfile profile, string path)
+        private static Material BuildRoleMaterial(Material source, float role, YBDissolveProfile profile, string path, Renderer renderer, YBPcssLighting pcss)
         {
             string shaderError;
             Shader shader = ResolveTargetShader(source, out shaderError);
             if (shader == null) throw new InvalidOperationException(shaderError);
+            bool usePcss = pcss.AppliesTo(renderer, source, shader);
             Material existing = AssetDatabase.LoadAssetAtPath<Material>(path);
             Material temp = new Material(source) { name = Path.GetFileNameWithoutExtension(path) };
             int queue = source.renderQueue;
-            temp.shader = shader;
+            temp.shader = usePcss ? pcss.GetShader(shader) : shader;
             temp.renderQueue = queue;
             if (temp.HasProperty(ScanHeight)) temp.SetFloat(ScanHeight, profile.scan.startHeight);
             if (temp.HasProperty(ScanRole)) temp.SetFloat(ScanRole, role);
             if (temp.HasProperty(ScanEnabled)) temp.SetFloat(ScanEnabled, 1f);
             if (temp.HasProperty(ScanNoise)) temp.SetFloat(ScanNoise, profile.scan.noiseStrength);
+            if (usePcss) pcss.ConfigureMaterial(temp, source);
 
             if (existing != null)
             {

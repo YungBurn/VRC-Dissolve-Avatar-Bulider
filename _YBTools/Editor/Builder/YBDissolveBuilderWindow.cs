@@ -1509,6 +1509,12 @@ namespace YBTools.Dissolve.Editor
 
             if (installRecord != null)
             {
+                using (new EditorGUI.DisabledScope(EditorApplication.isPlayingOrWillChangePlaymode))
+                {
+                    if (GUILayout.Button(L("原位更新已安装服装的 PCSS 受光")))
+                        validationStatus = YBPcssLighting.UpgradeInstalledMaterials(avatarRoot, installRecord, root);
+                }
+
                 using (new EditorGUILayout.HorizontalScope())
                 {
                     if (GUILayout.Button(L("验证当前安装（Edit/Play 自动适配）")))

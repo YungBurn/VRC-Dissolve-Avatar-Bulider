@@ -699,7 +699,7 @@ namespace YBTools.Dissolve.Editor
             return overlay;
         }
 
-        private static Renderer FindInstalledRenderer(GameObject avatarRoot, YBInstalledRendererRecord rr)
+        internal static Renderer FindInstalledRenderer(GameObject avatarRoot, YBInstalledRendererRecord rr)
         {
             if (avatarRoot == null || rr == null) return null;
             if (!string.IsNullOrEmpty(rr.installedRendererPath))

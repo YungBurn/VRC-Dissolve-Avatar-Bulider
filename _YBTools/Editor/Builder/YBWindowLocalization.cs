@@ -221,6 +221,7 @@ namespace YBTools.Dissolve.Editor
             { "安装工具版本", new[] { "Installer Version", "インストールツールのバージョン" } },
             { "安装时间 UTC", new[] { "Installed at (UTC)", "インストール日時（UTC）" } },
             { "验证当前安装（Edit/Play 自动适配）", new[] { "Validate Installation (Edit/Play)", "現在のインストールを検証（Edit/Play 対応）" } },
+            { "原位更新已安装服装的 PCSS 受光", new[] { "Update PCSS Lighting on Installed Outfits", "インストール済み衣装の PCSS ライティングを更新" } },
             { "安装验证", new[] { "Installation Validation", "インストール検証" } },
             { "卸载并恢复安装前状态", new[] { "Uninstall and Restore Original State", "アンインストールして元に戻す" } },
             { "卸载并恢复", new[] { "Uninstall and Restore", "アンインストールして復元" } },

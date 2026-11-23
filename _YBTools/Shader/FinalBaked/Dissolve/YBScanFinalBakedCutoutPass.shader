@@ -1200,6 +1200,8 @@ Shader "YBTools/溶解/FinalBaked/Pass/ScanHairCutout"
             #pragma multi_compile_shadowcaster
             #pragma multi_compile_instancing
             #define LIL_PASS_SHADOWCASTER
+            #define LIL_REQUIRE_APP_TEXCOORD3
+            #define LIL_V2F_FORCE_TEXCOORD0
 
             //----------------------------------------------------------------------------------------------------------------------
             // Pass
@@ -1242,18 +1244,14 @@ Shader "YBTools/溶解/FinalBaked/Pass/ScanHairCutout"
                 return lerp(below, 1.0 - below, saturate(_YBScanRole));
             }
 
-            void YBScanDissolve(inout float alpha, inout float dissolveAlpha, float2 uv, float bakedAvatarY)
-            {
-                alpha *= YBScanVisible(uv, bakedAvatarY);
-                dissolveAlpha = 0.0;
-            }
-
             void YBScanApplyClip(float2 uv, float bakedAvatarY)
             {
                 clip(YBScanVisible(uv, bakedAvatarY) - 0.5);
             }
 
-            #define OVERRIDE_DISSOLVE YBScanDissolve(fd.col.a, dissolveAlpha, fd.uv0, input.ybBakedAvatarY);            
+            // Clip before lilToon's alpha branch, which is skipped for opaque shadow casters.
+            #define BEFORE_UNPACK_V2F LIL_UNPACK_TEXCOORD0(input, fd); YBScanApplyClip(fd.uv0, input.ybBakedAvatarY);
+            #define OVERRIDE_DISSOLVE fd.col.a *= YBScanVisible(fd.uv0, input.ybBakedAvatarY); dissolveAlpha = 0.0;
             #include "Packages/jp.lilxyzw.liltoon/Shader/Includes/lil_common.hlsl"
             // Insert functions and includes that depend on Unity here
 
@@ -1290,6 +1288,8 @@ Shader "YBTools/溶解/FinalBaked/Pass/ScanHairCutout"
             #pragma multi_compile_shadowcaster
             #pragma multi_compile_instancing
             #define LIL_PASS_SHADOWCASTER
+            #define LIL_REQUIRE_APP_TEXCOORD3
+            #define LIL_V2F_FORCE_TEXCOORD0
 
             //----------------------------------------------------------------------------------------------------------------------
             // Pass
@@ -1333,18 +1333,14 @@ Shader "YBTools/溶解/FinalBaked/Pass/ScanHairCutout"
                 return lerp(below, 1.0 - below, saturate(_YBScanRole));
             }
 
-            void YBScanDissolve(inout float alpha, inout float dissolveAlpha, float2 uv, float bakedAvatarY)
-            {
-                alpha *= YBScanVisible(uv, bakedAvatarY);
-                dissolveAlpha = 0.0;
-            }
-
             void YBScanApplyClip(float2 uv, float bakedAvatarY)
             {
                 clip(YBScanVisible(uv, bakedAvatarY) - 0.5);
             }
 
-            #define OVERRIDE_DISSOLVE YBScanDissolve(fd.col.a, dissolveAlpha, fd.uv0, input.ybBakedAvatarY);            
+            // Clip before lilToon's alpha branch, which is skipped for opaque shadow casters.
+            #define BEFORE_UNPACK_V2F LIL_UNPACK_TEXCOORD0(input, fd); YBScanApplyClip(fd.uv0, input.ybBakedAvatarY);
+            #define OVERRIDE_DISSOLVE fd.col.a *= YBScanVisible(fd.uv0, input.ybBakedAvatarY); dissolveAlpha = 0.0;
             #include "Packages/jp.lilxyzw.liltoon/Shader/Includes/lil_common.hlsl"
             // Insert functions and includes that depend on Unity here
 

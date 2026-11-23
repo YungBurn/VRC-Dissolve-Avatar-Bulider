@@ -86,6 +86,7 @@ namespace YBTools.Dissolve.Editor
 
             try
             {
+                var pcss = new YBPcssLighting(avatarRoot);
                 for (int i = 0; i < report.renderers.Count; i++)
                 {
                     YBRendererAnalysis analyzed = report.renderers[i];
@@ -127,13 +128,15 @@ namespace YBTools.Dissolve.Editor
                         string sourceKey = GetSourceMaterialKey(slot.material, slot.assetGuid, analyzed.hierarchyPath, slot.slotIndex);
                         string groupKey = GetGroupKey(analyzed.outfitGroup);
                         Shader target = GetShader(resolved.mode, opaque, cutout, transparent, refraction, refractionBlur, fur, furCutout, furTwoPass, gem);
-                        string dissolveKey = groupKey + "|" + sourceKey + "|" + resolved.mode + "|role=" + role;
+                        bool usePcss = pcss.AppliesTo(analyzed.renderer, slot.material, target);
+                        string dissolveKey = groupKey + "|" + sourceKey + "|" + resolved.mode + "|role=" + role + (usePcss ? "|pcss" : "");
                         Material dissolve;
                         if (!dissolveCache.TryGetValue(dissolveKey, out dissolve))
                         {
                             string matName = "YB_Dissolve_" + groupKey + "_" + SafeMaterialName(slot.materialName) + "_" + ShortHash(dissolveKey);
                             string path = dissolveFolder + "/" + matName + ".mat";
-                            dissolve = BuildDissolveMaterial(slot.material, target, profile, role, path);
+                            dissolve = BuildDissolveMaterial(slot.material, usePcss ? pcss.GetShader(target) : target,
+                                profile, role, path, usePcss ? pcss : null);
                             dissolveCache[dissolveKey] = dissolve;
                             manifestTemp.generatedDissolveMaterialCount++;
                         }
@@ -439,7 +442,8 @@ namespace YBTools.Dissolve.Editor
             Shader targetShader,
             YBDissolveProfile profile,
             int role,
-            string assetPath)
+            string assetPath,
+            YBPcssLighting pcss)
         {
             Material temp = new Material(source);
             temp.name = Path.GetFileNameWithoutExtension(assetPath);
@@ -451,6 +455,7 @@ namespace YBTools.Dissolve.Editor
             SetFloat(temp, "_YBScanRole", role);
             SetFloat(temp, "_YBScanNoiseStrength", profile.scan.noiseStrength);
             SetVector(temp, "_YBScanRootOffset", Vector4.zero);
+            pcss?.ConfigureMaterial(temp, source);
             return SaveOrUpdateMaterial(temp, assetPath);
         }
 

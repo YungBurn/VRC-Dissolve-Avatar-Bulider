@@ -14,14 +14,14 @@ Shader "YBTools/溶解/FinalBaked/Hair Dissolve Refraction Blur"
             float _YBScanRole; \
             float _YBScanNoiseStrength; \
             float4 _YBScanRootOffset;
-        // Keep the custom UV4 transfer out of SHADOW_CASTER. This is compatible with lilToon
-        // versions where the shadow appdata omits uv3. id1 is used intentionally to also avoid
-        // the historical ShadowCaster TEXCOORD id0 collision.
-        #if !defined(UNITY_PASS_SHADOWCASTER) && !defined(SHADERPASS_SHADOWCASTER)
+        #if defined(UNITY_PASS_SHADOWCASTER)
+            #define LIL_V2F_FORCE_TEXCOORD0
+        #endif
+        #if defined(UNITY_PASS_SHADOWCASTER) || !defined(SHADERPASS_SHADOWCASTER)
             #define LIL_REQUIRE_APP_TEXCOORD3
             #define LIL_CUSTOM_V2F_MEMBER(id0,id1,id2,id3,id4,id5,id6,id7) float ybBakedAvatarY : TEXCOORD ## id1;
             #define LIL_CUSTOM_VERT_COPY LIL_V2F_OUT.ybBakedAvatarY = input.uv3.x;
-            #define BEFORE_UNPACK_V2F YBScanClip(input.positionCS.xy, input.ybBakedAvatarY);
+            #define BEFORE_UNPACK_V2F LIL_UNPACK_TEXCOORD0(input, fd); YBScanClip(fd.uv0, input.ybBakedAvatarY);
         #endif
     ENDHLSL
 
